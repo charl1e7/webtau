@@ -25,10 +25,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v12
+        uses: mymindstorm/setup-emsdk@v14
         with:
           version: '4.0.10'
           actions-cache-folder: 'emsdk-cache'
+
+      - name: Verify Emscripten installation
+        run: emcc -v
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.87.0
