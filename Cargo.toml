@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    "crates/w-synth",
+    "crates/rust-world",
+    "crates/rust-world/rsworld-sys",
+    "crates/rust-world/rsworld",
+
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+
+license = "MIT"
+
+[workspace.metadata.release]
+tag-message = "Release {{crate_name}} version {{version}}"
+tag-name = "{{prefix}}v{{version}}"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"

@@ -1,0 +1,24 @@
+[package]
+name = "w-synth"
+version = "1.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1"
+bincode = { version = "2.0", features = ["serde"] }
+biquad = "0.5"
+console_error_panic_hook = "0.1"
+hound = "3.5"
+rand = "0.9"
+rand_distr = "0.5"
+regex = "1.11"
+rsworld = {path="../rust-world/rsworld"}
+rsworld-sys = {path="../rust-world/rsworld-sys"}
+rubato = { version = "0.16", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm"] }
+

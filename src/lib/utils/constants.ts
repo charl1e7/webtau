@@ -1,0 +1,7 @@
+export const PIANO_ROLL_CONFIG = {
+    NOTE_HEIGHT_PX: 20,
+    MS_PER_PIXEL: 2,
+    MIN_NOTE_DURATION_MS: 50,
+    MAX_MIDI_PITCH: 108, // C8
+    MIN_MIDI_PITCH: 21,  // A0
+};

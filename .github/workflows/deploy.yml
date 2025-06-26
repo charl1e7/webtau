@@ -1,0 +1,70 @@
+name: Build and Deploy to GitHub Pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v12
+        with:
+          version: '4.0.10'
+          actions-cache-folder: 'emsdk-cache'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.87.0
+        with:
+          toolchain: 1.87.0
+
+      - name: Add wasm32-unknown-emscripten target
+        run: rustup target add wasm32-unknown-emscripten
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.15.0"
+          cache: 'npm'
+
+      - name: Install NPM dependencies
+        run: npm install
+
+      - name: Build Rust (Wasm) component
+        run: |
+          chmod +x ./build.sh
+          ./build.sh release
+
+      - name: Build SvelteKit app
+        env:
+          BASE_PATH: /webtau 
+        run: npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './build'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

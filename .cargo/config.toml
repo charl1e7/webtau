@@ -1,0 +1,23 @@
+[target.wasm32-unknown-emscripten]
+linker = "emcc"
+
+rustflags = [
+    "-C", "link-arg=-o",
+    "-C", "link-arg=w-synth.js",
+
+    "-C", "link-arg=-sMODULARIZE=1",
+
+    "-C", "link-arg=-sEXPORT_ES6=1",
+    
+    "-C", "link-arg=-sEXPORT_NAME='WSynthModule'",
+
+    "-C", "link-arg=-sEXPORTED_FUNCTIONS=['_wsynth_init','_wsynth_engine_create','_wsynth_engine_destroy','_wsynth_engine_load_oto','_wsynth_engine_load_prefix_map','_wsynth_engine_synthesize_project','_wsynth_free_buffer','_malloc','_free','_wsynth_analyze_wav','_wsynth_engine_cache_features']",
+    "-C", "link-arg=-sEXPORTED_RUNTIME_METHODS=['cwrap','setValue','getValue','allocateUTF8','HEAPU8']",
+
+    "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",
+]
+
+[env]
+CC_wasm32-unknown-emscripten = "emcc"
+CXX_wasm32_unknown_emscripten = "emcc"
+CXXFLAGS_wasm32_unknown_emscripten = "-fPIC"
