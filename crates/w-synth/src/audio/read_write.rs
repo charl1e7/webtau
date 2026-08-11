@@ -1,45 +1,29 @@
 use crate::consts;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use hound::{SampleFormat, WavSpec, WavWriter};
-use rubato::{
-    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-};
+use rubato::audioadapter_buffers::direct::InterleavedSlice;
+use rubato::{Fft, FixedSync, Resampler};
 use std::io::Cursor;
-use symphonia::{
-    core::{
-        audio::SampleBuffer, codecs::DecoderOptions, errors::Error, formats::FormatOptions,
-        io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
-    },
-    default::{get_codecs, get_probe},
-};
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::errors::Error;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
 
 fn resample_audio(audio: Vec<f64>, in_fs: u32, out_fs: u32) -> Result<Vec<f64>> {
     let in_samples = audio.len();
-    let out_samples = (in_samples as f64 * out_fs as f64 / in_fs as f64) as usize;
-    let mut resampled: Vec<f64> = Vec::with_capacity(out_samples);
+    let mut resampler = Fft::<f64>::new(in_fs as usize, out_fs as usize, 1024, 1, FixedSync::Both)
+        .context("failed to create resampler")?;
 
-    let resampler_params = SincInterpolationParameters {
-        sinc_len: 256,
-        f_cutoff: 1.,
-        oversampling_factor: 128,
-        interpolation: SincInterpolationType::Cubic,
-        window: WindowFunction::Hann,
-    };
-    let mut resampler =
-        SincFixedIn::<f64>::new(out_fs as f64 / in_fs as f64, 2., resampler_params, 1024, 1)?;
+    let input_adapter = InterleavedSlice::new(&audio, 1, in_samples)
+        .map_err(|e| anyhow::anyhow!("failed to wrap input audio buffer: {e}"))?;
 
-    for i in (0..in_samples).step_by(1024) {
-        let end = (i + 1024).min(in_samples);
-        let mut chunk = audio[i..end].to_vec();
-        if chunk.len() < 1024 {
-            chunk.resize(1024, 0.0);
-        }
+    let resampled = resampler
+        .process_all(&input_adapter, in_samples, None)
+        .context("failed to resample audio")?;
 
-        let chunk = vec![chunk];
-        let mut res = resampler.process(&chunk, None)?;
-        resampled.append(&mut res[0]);
-    }
-    Ok(resampled)
+    Ok(resampled.take_data())
 }
 
 pub fn read_audio(audio_data: &[u8]) -> Result<Vec<f64>> {
@@ -48,51 +32,64 @@ pub fn read_audio(audio_data: &[u8]) -> Result<Vec<f64>> {
 
     let hint = Hint::new();
 
-    let format_opts: FormatOptions = Default::default();
-    let metadata_opts: MetadataOptions = Default::default();
-    let decoder_opts: DecoderOptions = Default::default();
+    let fmt_opts: FormatOptions = Default::default();
+    let meta_opts: MetadataOptions = Default::default();
+    let dec_opts: AudioDecoderOptions = Default::default();
 
-    let probed = get_probe().format(&hint, mss, &format_opts, &metadata_opts)?;
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, mss, fmt_opts, meta_opts)
+        .context("failed to probe audio format")?;
 
-    let mut format = probed.format;
-    let track = format.default_track().unwrap();
-    let mut decoder = get_codecs().make(&track.codec_params, &decoder_opts)?;
+    let track = format
+        .default_track(TrackType::Audio)
+        .context("no audio track found")?;
     let track_id = track.id;
 
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(
+            track
+                .codec_params
+                .as_ref()
+                .context("missing codec parameters")?
+                .audio()
+                .context("not an audio codec")?,
+            &dec_opts,
+        )
+        .context("unsupported codec")?;
+
     let mut audio: Vec<f64> = Vec::new();
-    let mut channels = 1;
-    let mut fs = 1;
-    let mut packet_buffer = None;
+    let mut channels = 1usize;
+    let mut fs = 1u32;
+    let mut interleaved: Vec<f64> = Vec::new();
+
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
+            Err(Error::ResetRequired) => break,
             Err(_) => break,
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
         match decoder.decode(&packet) {
-            Ok(decoded_packet) => {
-                if packet_buffer.is_none() {
-                    let spec = *decoded_packet.spec();
-                    channels = spec.channels.count();
-                    fs = spec.rate;
-                    let duration = decoded_packet.capacity() as u64;
-                    packet_buffer = Some(SampleBuffer::<f64>::new(duration, spec));
-                }
+            Ok(audio_buf) => {
+                let spec = audio_buf.spec().clone();
+                channels = spec.channels().count();
+                fs = spec.rate();
 
-                if let Some(buffer) = &mut packet_buffer {
-                    buffer.copy_interleaved_ref(decoded_packet);
-                    let samples = buffer.samples();
-                    for s in 0..samples.len() / channels {
-                        let mut a = 0.;
-                        for c in 0..channels {
-                            a += samples[s * channels + c];
-                        }
-                        audio.push(a / channels as f64);
+                let n = audio_buf.samples_interleaved();
+                interleaved.resize(n, 0.0);
+                audio_buf.copy_to_slice_interleaved(&mut interleaved);
+
+                for s in 0..interleaved.len() / channels {
+                    let mut a = 0.;
+                    for c in 0..channels {
+                        a += interleaved[s * channels + c];
                     }
+                    audio.push(a / channels as f64);
                 }
             }
             Err(Error::DecodeError(_)) => continue,

@@ -1,7 +1,9 @@
+use std::path::PathBuf;
+
 fn main() {
-    let world_dir: &str = "World";
-    let world_src: &str = &format!("{}/{}", world_dir, "src");
-    let _world_header: &str = &format!("{}/{}", world_src, "world");
+    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+
+    let world_src = manifest_dir.join("World").join("src");
 
     let file_names = [
         "cheaptrick",
@@ -16,13 +18,13 @@ fn main() {
         "synthesis",
         "synthesisrealtime",
     ];
-    for file_name in &file_names {
+
+    for file_name in file_names {
         cc::Build::new()
             .cpp(true)
-            // .warnings(true)
             .flag("-w")
-            .file(&format!("{}/{}.cpp", world_src, file_name))
-            .include(world_src)
-            .compile(&format!("{}", file_name));
+            .file(world_src.join(format!("{file_name}.cpp")))
+            .include(&world_src)
+            .compile(file_name);
     }
 }

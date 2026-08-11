@@ -1,7 +1,7 @@
 use crate::consts;
 use anyhow::{Result, anyhow};
-use bincode::Decode;
-use bincode::Encode;
+use oxicode::Decode;
+use oxicode::Encode;
 use rsworld::{cheaptrick, code_aperiodicity, code_spectral_envelope, d4c, harvest};
 use rsworld_sys::{CheapTrickOption, D4COption, HarvestOption};
 use serde::{Deserialize, Serialize};

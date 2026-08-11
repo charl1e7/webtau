@@ -1,4 +1,4 @@
-use bincode::config;
+use oxicode::config;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -68,7 +68,9 @@ pub struct WasmBuffer {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wsynth_init() {
-    panic::set_hook(Box::new(console_error_panic_hook::hook));
+    std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("WASM Panic: {}", panic_info);
+    }));
 }
 
 #[unsafe(no_mangle)]
@@ -134,21 +136,18 @@ pub unsafe extern "C" fn wsynth_analyze_wav(data: *const u8, len: usize) -> *mut
     };
 
     match generate_features(audio, None) {
-        Ok(features) => {
-            let bincode_config = config::standard();
-            match bincode::encode_to_vec(&features, bincode_config) {
-                Ok(mut serialized_bytes) => {
-                    serialized_bytes.shrink_to_fit();
-                    let ptr = serialized_bytes.as_mut_ptr();
-                    let len = serialized_bytes.len();
-                    std::mem::forget(serialized_bytes);
+        Ok(features) => match oxicode::encode_to_vec(&features) {
+            Ok(mut serialized_bytes) => {
+                serialized_bytes.shrink_to_fit();
+                let ptr = serialized_bytes.as_mut_ptr();
+                let len = serialized_bytes.len();
+                std::mem::forget(serialized_bytes);
 
-                    let buffer = Box::new(WasmBuffer { ptr, len });
-                    Box::into_raw(buffer)
-                }
-                Err(_) => std::ptr::null_mut(),
+                let buffer = Box::new(WasmBuffer { ptr, len });
+                Box::into_raw(buffer)
             }
-        }
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => ptr::null_mut(),
     }
 }
@@ -169,9 +168,8 @@ pub unsafe extern "C" fn wsynth_engine_cache_features(
     }
 
     let data_slice = unsafe { std::slice::from_raw_parts(data, len) };
-    let bincode_config = config::standard();
 
-    match bincode::decode_from_slice::<WorldFeatures, _>(data_slice, bincode_config) {
+    match oxicode::decode_from_slice::<WorldFeatures>(data_slice) {
         Ok((features, _)) => {
             engine.features_cache.insert(filename.to_string(), features);
             true
