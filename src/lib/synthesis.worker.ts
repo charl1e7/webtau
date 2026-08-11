@@ -18,6 +18,16 @@ self.onmessage = async (e: MessageEvent) => {
                 }
                 break;
 
+            case 'reset_engine':
+                if (client) {
+                    if (enginePtr !== null) {
+                        client.destroyEngine(enginePtr);
+                    }
+                    enginePtr = client.createEngine();
+                    if (!enginePtr) throw new Error("Failed to recreate engine in worker.");
+                }
+                break;
+
             case 'load_oto':
                 if (!client || !enginePtr) throw new Error("Engine is not initialized in worker.");
                 const otoSuccess = await client.loadOto(enginePtr, payload.data);

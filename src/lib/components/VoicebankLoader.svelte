@@ -8,7 +8,6 @@
 	let isDragActive = false;
 	let uploadMode: 'zip' | 'folder' = 'zip';
 
-	
 	interface VirtualFile {
 		relativePath: string;
 		getUint8Array: () => Promise<Uint8Array>;
@@ -53,7 +52,6 @@
 		return Array.from(aliases).sort((a, b) => a.localeCompare(b));
 	}
 
-
 	async function readDirectoryEntries(directoryEntry: FileSystemDirectoryEntry): Promise<File[]> {
 		const reader = directoryEntry.createReader();
 		const entries = await new Promise<FileSystemEntry[]>((resolve, reject) => {
@@ -82,6 +80,7 @@
 		const wavPromises: Promise<{ name: string; data: Uint8Array }>[] = [];
 		let characterTxtFile: VirtualFile | null = null;
 		let prefixMapFile: VirtualFile | null = null;
+
 		files.forEach((file) => {
 			const lowerPath = file.relativePath.toLowerCase();
 
@@ -102,30 +101,54 @@
 			}
 		});
 
+		let combinedOtoString = '';
 		const otos = await Promise.all(otoPromises);
-		if (otos.length === 0) {
-			throw new Error('No oto.ini files found.');
-		}
-		setStatus('Merging oto.ini...');
-		const otoStrings: string[] = [];
-		const decoder = new TextDecoder('shift-jis', { fatal: false });
-		for (const otoBuffer of otos) {
-			try {
-				otoStrings.push(decoder.decode(otoBuffer));
-			} catch {
-				console.warn('Failed to decode oto.ini as Shift-JIS, trying UTF-8...');
-				otoStrings.push(new TextDecoder('utf-8').decode(otoBuffer));
+
+		if (otos.length > 0) {
+			setStatus('Merging oto.ini...');
+			const otoStrings: string[] = [];
+			const decoder = new TextDecoder('shift-jis', { fatal: false });
+			for (const otoBuffer of otos) {
+				try {
+					otoStrings.push(decoder.decode(otoBuffer));
+				} catch {
+					console.warn('Failed to decode oto.ini as Shift-JIS, trying UTF-8...');
+					otoStrings.push(new TextDecoder('utf-8').decode(otoBuffer));
+				}
 			}
+			combinedOtoString = otoStrings.join('\n');
+		} else {
+			setStatus('oto.ini not found. Generating default voicebank configuration...');
+			const defaultOtoLines: string[] = [];
+			const processedWavs = new Set<string>();
+
+			files.forEach((file) => {
+				if (file.relativePath.toLowerCase().endsWith('.wav')) {
+					const filename = file.relativePath.split('/').pop()!;
+					if (!processedWavs.has(filename)) {
+						processedWavs.add(filename);
+						const alias = filename.replace(/\.wav$/i, '');
+						if (alias) {
+							defaultOtoLines.push(`${filename}=${alias},0,0,0,0,0`);
+						}
+					}
+				}
+			});
+
+			if (defaultOtoLines.length === 0) {
+				throw new Error('No .wav files found in the loaded folder/archive.');
+			}
+
+			combinedOtoString = defaultOtoLines.join('\n');
 		}
 
-		const combinedOtoString = otoStrings.join('\n');
 		const otoDataUtf8 = new TextEncoder().encode(combinedOtoString);
 
 		const prefixMapData = prefixMapFile ? await prefixMapFile.getUint8Array() : null;
 		let voicebankInfo: VoicebankInfo = {
 			id: `vb-${Date.now()}`,
 			name: voicebankName,
-			aliases: parseOtoAliases(combinedOtoString) 
+			aliases: parseOtoAliases(combinedOtoString)
 		};
 
 		if (characterTxtFile) {
@@ -145,7 +168,7 @@
 					? characterTxtFile.relativePath.substring(0, characterTxtFile.relativePath.lastIndexOf('/') + 1)
 					: '';
 				const imagePath = charTxtDir + imageName;
-				
+
 				const imageFile = files.find(f => f.relativePath.toLowerCase().replace(/\\/g, '/') === imagePath.toLowerCase().replace(/\\/g, '/'));
 
 				if (imageFile) {
@@ -164,7 +187,7 @@
 		}
 		await loadVoicebank(voicebankInfo, otoDataUtf8, wavFiles, prefixMapData);
 	}
-	
+
 	async function handleInput(items: FileList | DataTransferItemList) {
 		if (isLoading) return;
 		isLoading = true;
@@ -260,7 +283,6 @@
 			if (fileInput) fileInput.value = '';
 		}
 	}
-
 
 	function handleDragOver(event: DragEvent) {
 		event.preventDefault();
@@ -366,7 +388,6 @@
 </div>
 
 <style>
-	
 	.upload-mode-toggle {
 		display: flex;
 		position: relative;
@@ -420,7 +441,6 @@
 		color: #fff;
 	}
 
-	
 	.voicebank-loader {
 		background: 
 			linear-gradient(145deg, #181818 0%, #222 30%, #111 100%),
@@ -459,7 +479,6 @@
 		text-align: center;
 	}
 
-	
 	.file-input-label::before {
 		content: '';
 		position: absolute;
@@ -565,7 +584,6 @@
 		display: none;
 	}
 
-	/* Responsive design */
 	@media (max-width: 768px) {
 		.loader-content {
 			padding: 1rem;

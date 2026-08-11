@@ -186,12 +186,26 @@ export const loadVoicebank = async (
         return;
     }
 
-    setStatus(`Loading voicebank "${voicebankInfo.name}"...`);
-    const oldVoicebank = get(appState).currentVoicebank;
+    const currentState = get(appState);
+    if (currentState.playback.isPlaying) {
+        stopPlayback();
+    }
+
+    const oldVoicebank = currentState.currentVoicebank;
     if (oldVoicebank?.image) {
         URL.revokeObjectURL(oldVoicebank.image);
     }
-    appState.update(state => ({ ...state, currentVoicebank: null, playback: initialAppState.playback }));
+
+    appState.update(state => ({ 
+        ...state, 
+        currentVoicebank: null, 
+        playback: initialAppState.playback,
+        synthesis: { isSynthesizing: false, progress: 0, statusMessage: '' }
+    }));
+
+    setStatus(`Loading voicebank "${voicebankInfo.name}"...`);
+
+    synthesisWorker.postMessage({ type: 'reset_engine' });
 
     try {
         synthesisWorker.postMessage({ type: 'load_oto', payload: { data: otoData } }, [otoData.buffer]);
