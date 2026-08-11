@@ -76,9 +76,9 @@ const initialSettings: SettingsState = {
 		analysisCoreCount: 0, 
 	},
 	pianoRoll: {
-		defaultLyric: 'あ',
-		playbackStartMode: 'resume', 
-		reRenderOnPlay: false,
+		defaultLyric: '',
+		playbackStartMode: 'from_start', 
+		reRenderOnPlay: true,
 	},
 };
 

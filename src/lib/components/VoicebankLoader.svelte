@@ -31,6 +31,29 @@
 		return info;
 	}
 
+	function parseOtoAliases(otoContent: string): string[] {
+		const aliases = new Set<string>();
+		const lines = otoContent.split(/\r?\n/);
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed || trimmed.startsWith(';')) continue;
+			const eqIndex = trimmed.indexOf('=');
+			if (eqIndex === -1) continue;
+			const wavFile = trimmed.substring(0, eqIndex).trim();
+			const rest = trimmed.substring(eqIndex + 1);
+			const parts = rest.split(',');
+			let alias = parts[0] ? parts[0].trim() : '';
+			if (!alias) {
+				alias = wavFile.replace(/\.wav$/i, '');
+			}
+			if (alias) {
+				aliases.add(alias);
+			}
+		}
+		return Array.from(aliases).sort((a, b) => a.localeCompare(b));
+	}
+
+
 	async function readDirectoryEntries(directoryEntry: FileSystemDirectoryEntry): Promise<File[]> {
 		const reader = directoryEntry.createReader();
 		const entries = await new Promise<FileSystemEntry[]>((resolve, reject) => {
@@ -94,13 +117,15 @@
 				otoStrings.push(new TextDecoder('utf-8').decode(otoBuffer));
 			}
 		}
+
 		const combinedOtoString = otoStrings.join('\n');
 		const otoDataUtf8 = new TextEncoder().encode(combinedOtoString);
 
 		const prefixMapData = prefixMapFile ? await prefixMapFile.getUint8Array() : null;
 		let voicebankInfo: VoicebankInfo = {
 			id: `vb-${Date.now()}`,
-			name: voicebankName
+			name: voicebankName,
+			aliases: parseOtoAliases(combinedOtoString) 
 		};
 
 		if (characterTxtFile) {

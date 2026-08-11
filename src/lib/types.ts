@@ -56,6 +56,7 @@ export interface VoicebankInfo {
 	name: string;
 	image?: string | null;
 	characterInfo?: Map<string, string>;
+	aliases?: string[]; 
 }
 export interface PlaybackState {
 	isPlaying: boolean;

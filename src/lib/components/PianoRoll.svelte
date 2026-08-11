@@ -1,3 +1,4 @@
+<!-- src/lib/components/PianoRoll.svelte -->
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { appState, updateNote, addNote, selectNote, clearSelection, gridSettings, deleteNoteById, updatePitchbendPoint, deletePitchbendPoint, addPitchbendPoint, pianorollViewSettings, setPlaybackTime, settings } from '$lib/stores';
@@ -17,6 +18,7 @@
 	
 	let container: HTMLElement;
 	let aliasInput: HTMLInputElement;
+	let suggestionsListElement: HTMLUListElement;
 
 	let scrollX = 0;
 	let scrollY = 0;
@@ -26,12 +28,33 @@
 	let dragStartY = 0;
 	let draggedNoteOriginal: Note | null = null;
 	let resizedNoteOriginal: Note | null = null;
+	let justCreatedNote: Note | null = null;
 	
 	let isDraggingPitchbendPoint = false;
 	let draggedPitchbendInfo: { noteId: string, pointId: string } | null = null;
 
 	let editingAlias: { noteId:string | null; style: string } = { noteId: null, style: '' };
+	let isPopupBelow = false;
     let resizingHoverNoteId: string | null = null;
+
+	$: editingNoteObj = notes.find(n => n.id === editingAlias.noteId);
+
+	let filterText = '';
+	let selectedIndex = 0;
+
+	$: availableAliases = $appState.currentVoicebank?.aliases || [];
+	$: filteredAliases = filterText.trim() === ''
+		? availableAliases
+		: availableAliases
+				.filter(a => a.toLowerCase().includes(filterText.toLowerCase()))
+				.sort((a, b) => {
+					const q = filterText.toLowerCase();
+					const aStart = a.toLowerCase().startsWith(q);
+					const bStart = b.toLowerCase().startsWith(q);
+					if (aStart && !bStart) return -1;
+					if (!aStart && bStart) return 1;
+					return a.localeCompare(b);
+				});
 
 	const { MIN_NOTE_DURATION_MS } = PIANO_ROLL_CONFIG;
 	const RULER_HEIGHT_PX = 30;
@@ -253,6 +276,27 @@
 					}
 				} else {
 					clearSelection();
+					if (event.detail >= 2) {
+						const snapX_px = Math.floor(clientX / (gridMinorMs / msPerPixel)) * (gridMinorMs / msPerPixel);
+						const snappedStartTimeMs = Math.max(0, snapX_px * msPerPixel);
+						const snappedMidiPitch = MAX_MIDI - Math.floor(clientY / noteHeightPx);
+						const snappedStartBeat = snappedStartTimeMs / msPerBeat;
+						const defaultLyric = get(settings).pianoRoll.defaultLyric;
+						
+						const newNote: Note = { 
+							id: uuidv4(), 
+							alias: defaultLyric, 
+							midiPitch: snappedMidiPitch, 
+							startBeat: snappedStartBeat, 
+							durationBeat: beatsPerGridMinor, 
+							pitchbend: [] 
+						};
+						addNote(newNote);
+						
+						isResizingNote = true;
+						resizedNoteOriginal = { ...newNote };
+						justCreatedNote = newNote;
+					}
 				}
 				break;
 			}
@@ -378,14 +422,21 @@
 		}
 	}
 
-	function handleGridMouseUp() {
+	async function handleGridMouseUp() {
 		isDraggingNote = false;
 		isResizingNote = false;
 		draggedNoteOriginal = null;
 		resizedNoteOriginal = null;
 		isDraggingPitchbendPoint = false;
 		draggedPitchbendInfo = null;
-		draw();
+		
+		if (justCreatedNote) {
+			const noteToEdit = justCreatedNote;
+			justCreatedNote = null;
+			await startAliasEdit(noteToEdit);
+		} else {
+			draw();
+		}
 	}
 
 	async function handleGridDoubleClick(event: MouseEvent) {
@@ -395,13 +446,6 @@
 		if (currentMode === 'select') {
 			if (clickedNote) {
 				await startAliasEdit(clickedNote);
-			} else {
-				const snapX_px = Math.floor(clientX / (gridMinorMs / msPerPixel)) * (gridMinorMs / msPerPixel);
-				const snappedStartTimeMs = Math.max(0, snapX_px * msPerPixel);
-				const snappedMidiPitch = MAX_MIDI - Math.floor(clientY / noteHeightPx);
-				const snappedStartBeat = snappedStartTimeMs / msPerBeat;
-				const defaultLyric = get(settings).pianoRoll.defaultLyric;
-				addNote({ id: uuidv4(), alias: defaultLyric, midiPitch: snappedMidiPitch, startBeat: snappedStartBeat, durationBeat: beatsPerGridMinor, pitchbend: [] });
 			}
 		}
 	}
@@ -422,16 +466,24 @@
 
 	async function startAliasEdit(note: Note) {
 		if (!msPerBeat) return;
-		const noteX = (note.startBeat * msPerBeat) / msPerPixel;
-		const noteY = (MAX_MIDI - note.midiPitch) * noteHeightPx;
-		const noteWidth = (note.durationBeat * msPerBeat) / msPerPixel;
+		const currentNote = notes.find(n => n.id === note.id) || note;
+
+		const noteX = (currentNote.startBeat * msPerBeat) / msPerPixel;
+		const noteY = (MAX_MIDI - currentNote.midiPitch) * noteHeightPx;
+		const noteWidth = (currentNote.durationBeat * msPerBeat) / msPerPixel;
+		
+		isPopupBelow = noteY < 170;
+
 		editingAlias = {
-			noteId: note.id,
-			style: `top: ${noteY}px; left: ${noteX}px; width: ${noteWidth}px; height: ${noteHeightPx}px;`
+			noteId: currentNote.id,
+			style: `top: ${noteY}px; left: ${noteX}px; width: ${Math.max(noteWidth, 60)}px; height: ${noteHeightPx}px;`
 		};
+		filterText = currentNote.alias;
+		selectedIndex = 0;
+
 		await tick();
 		if (aliasInput) {
-			aliasInput.value = note.alias;
+			aliasInput.value = currentNote.alias;
 			aliasInput.focus();
 			aliasInput.select();
 		}
@@ -440,15 +492,72 @@
 
 	function finishAliasEdit() {
 		if (!editingAlias.noteId || !aliasInput) return;
-		updateNote(editingAlias.noteId, { alias: aliasInput.value.trim() });
+		const val = aliasInput.value.trim();
+		if (val) {
+			updateNote(editingAlias.noteId, { alias: val });
+		}
 		editingAlias = { noteId: null, style: '' };
 		draw();
 	}
 
+	function handleInputResizerMouseDown(event: MouseEvent) {
+		event.preventDefault();
+		event.stopPropagation();
+		
+		const noteToResize = notes.find(n => n.id === editingAlias.noteId);
+		if (!noteToResize) return;
+
+		finishAliasEdit();
+
+		isResizingNote = true;
+		resizedNoteOriginal = { ...noteToResize };
+
+		const rect = gridCanvas.getBoundingClientRect();
+		dragStartX = event.clientX - rect.left;
+		dragStartY = event.clientY - rect.top;
+	}
+
+	function scrollToSelected() {
+		if (!suggestionsListElement) return;
+		const activeEl = suggestionsListElement.children[selectedIndex] as HTMLElement;
+		if (activeEl) {
+			activeEl.scrollIntoView({ block: 'nearest' });
+		}
+	}
+
+	function handleAliasInput(event: Event) {
+		filterText = (event.target as HTMLInputElement).value;
+		selectedIndex = 0;
+	}
+
+	function selectSuggestion(alias: string) {
+		if (aliasInput) {
+			aliasInput.value = alias;
+			filterText = alias;
+		}
+		finishAliasEdit();
+	}
+
 	function handleAliasInputKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
-			finishAliasEdit();
+		if (event.key === 'ArrowDown') {
 			event.preventDefault();
+			if (filteredAliases.length > 0) {
+				selectedIndex = (selectedIndex + 1) % filteredAliases.length;
+				tick().then(scrollToSelected);
+			}
+		} else if (event.key === 'ArrowUp') {
+			event.preventDefault();
+			if (filteredAliases.length > 0) {
+				selectedIndex = (selectedIndex - 1 + filteredAliases.length) % filteredAliases.length;
+				tick().then(scrollToSelected);
+			}
+		} else if (event.key === 'Enter') {
+			event.preventDefault();
+			if (filteredAliases.length > 0 && selectedIndex >= 0 && selectedIndex < filteredAliases.length) {
+				const chosen = filteredAliases[selectedIndex];
+				if (aliasInput) aliasInput.value = chosen;
+			}
+			finishAliasEdit();
 		} else if (event.key === 'Escape') {
 			editingAlias = { noteId: null, style: '' };
 			draw();
@@ -670,15 +779,41 @@
 		</div>
 		<div class="canvas-wrapper">
 			<canvas bind:this={gridCanvas}></canvas>
-			{#if editingAlias.noteId}
-				<input 
-					bind:this={aliasInput}
-					type="text"
-					class="alias-input"
-					style={editingAlias.style}
-					on:blur={finishAliasEdit}
-					on:keydown={handleAliasInputKeydown}
-				/>
+
+			{#if editingAlias.noteId && editingNoteObj}
+				<div class="alias-edit-wrapper" style={editingAlias.style}>
+					{#if filteredAliases.length > 0}
+						<ul 
+							class="alias-suggestions" 
+							class:below={isPopupBelow} 
+							bind:this={suggestionsListElement}
+						>
+							{#each filteredAliases as alias, index}
+								<li
+									class:selected={index === selectedIndex}
+									on:mousedown|preventDefault={() => selectSuggestion(alias)}
+								>
+									{alias}
+								</li>
+							{/each}
+						</ul>
+					{/if}
+
+					<input 
+						bind:this={aliasInput}
+						type="text"
+						class="alias-input"
+						on:input={handleAliasInput}
+						on:blur={finishAliasEdit}
+						on:keydown={handleAliasInputKeydown}
+					/>
+
+					<div 
+						class="input-note-resizer"
+						title="Stretch note"
+						on:mousedown={handleInputResizerMouseDown}
+					></div>
+				</div>
 			{/if}
 		</div>
 	</div>
@@ -760,20 +895,85 @@
 	.piano-key.sharp { background-color: #4a4a4a; }
 	.piano-key.c-note { background-color: #f8bbd0; color: #333; }
 
+	.alias-edit-wrapper {
+		position: absolute;
+		display: flex;
+		flex-direction: column;
+		z-index: 20;
+	}
+
     .alias-input {
-        position: absolute;
-        background-color: rgba(255, 255, 255, 0.9);
+        width: 100%;
+        height: 100%;
+        background-color: rgba(255, 255, 255, 0.95);
         border: 1px solid var(--primary-color);
         box-sizing: border-box;
         text-align: center;
         font-family: Arial, sans-serif;
         font-size: 12px;
-        padding: 0;
+        padding: 0 8px 0 0;
         margin: 0;
         color: black;
         outline: none;
-        z-index: 10;
+        border-radius: 2px;
     }
+
+	.input-note-resizer {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: 0;
+		width: 10px;
+		cursor: ew-resize;
+		z-index: 30;
+		background: transparent;
+	}
+
+	.alias-suggestions {
+		position: absolute;
+		bottom: 100%;
+		left: 0;
+		min-width: 120px;
+		max-width: 220px;
+		max-height: 160px;
+		overflow-y: auto;
+		background: #1e1e1e;
+		border: 1px solid var(--primary-color);
+		border-radius: 6px;
+		box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.7);
+		margin: 0 0 4px 0;
+		padding: 4px 0;
+		list-style: none;
+		z-index: 25;
+	}
+
+	.alias-suggestions.below {
+		bottom: auto;
+		top: 100%;
+		margin: 4px 0 0 0;
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+	}
+
+	.alias-suggestions li {
+		padding: 4px 10px;
+		font-size: 12px;
+		font-family: monospace, sans-serif;
+		color: #e0e0e0;
+		cursor: pointer;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.alias-suggestions li:hover {
+		background: rgba(233, 30, 99, 0.3);
+	}
+
+	.alias-suggestions li.selected {
+		background: var(--primary-color);
+		color: #ffffff;
+		font-weight: bold;
+	}
 
 	.pianoroll-zoom-panel {
 		display: flex;
