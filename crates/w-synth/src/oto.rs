@@ -23,20 +23,27 @@ pub fn parse_oto_ini<R: Read>(reader: R) -> Result<OtoMap> {
 
     for line_result in buffered_reader.lines() {
         let line = line_result?;
-        if line.trim().is_empty() {
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() || trimmed_line.starts_with('#') || trimmed_line.starts_with(';') {
             continue;
         }
 
-        if let Some(eq_pos) = line.find('=') {
-            let filename = line[..eq_pos].to_string();
-            let value_part = &line[eq_pos + 1..];
+        if let Some(eq_pos) = trimmed_line.find('=') {
+            let filename = trimmed_line[..eq_pos].trim().to_string();
+            let value_part = &trimmed_line[eq_pos + 1..];
             let mut params_iter = value_part.split(',');
 
             if let Some(alias_raw) = params_iter.next() {
-                let alias = alias_raw.trim();
-                if alias.is_empty() {
-                    continue;
-                }
+                let alias_trimmed = alias_raw.trim();
+                let alias = if alias_trimmed.is_empty() {
+                    filename
+                        .strip_suffix(".wav")
+                        .or_else(|| filename.strip_suffix(".WAV"))
+                        .unwrap_or(&filename)
+                        .to_string()
+                } else {
+                    alias_trimmed.to_string()
+                };
 
                 let params: Vec<&str> = params_iter.collect();
                 if params.len() < 5 {
@@ -44,15 +51,15 @@ pub fn parse_oto_ini<R: Read>(reader: R) -> Result<OtoMap> {
                 }
 
                 let entry = OtoEntry {
-                    filename,
-                    alias: alias.to_string(),
+                    filename: filename.clone(),
+                    alias: alias.clone(),
                     offset: params[0].trim().parse().unwrap_or(0.0),
                     consonant: params[1].trim().parse().unwrap_or(0.0),
                     cutoff: params[2].trim().parse().unwrap_or(0.0),
                     preutterance: params[3].trim().parse().unwrap_or(0.0),
                     overlap: params[4].trim().parse().unwrap_or(0.0),
                 };
-                oto_map.insert(alias.to_string(), entry);
+                oto_map.insert(alias, entry);
             }
         }
     }

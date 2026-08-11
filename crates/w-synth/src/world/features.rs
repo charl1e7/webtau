@@ -37,6 +37,11 @@ fn calculate_base_f0(f0: &Vec<f64>) -> f64 {
 
     if tally > 0. {
         base_f0 /= tally;
+    } else {
+        base_f0 = 220.0;
+    }
+    if base_f0 <= 0.0 || !base_f0.is_finite() {
+        base_f0 = 220.0;
     }
     base_f0
 }

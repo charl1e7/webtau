@@ -237,7 +237,7 @@ pub unsafe extern "C" fn wsynth_engine_synthesize_project(
         }
 
         let final_alias = resample::resolve_alias(current_note, &engine.prefix_map, &engine.oto);
-        let oto_entry = match engine.oto.get(&final_alias) {
+        let oto_entry = match resample::find_oto_entry(&engine.oto, &final_alias) {
             Some(entry) => entry,
             None => {
                 println!(
@@ -281,9 +281,13 @@ pub unsafe extern "C" fn wsynth_engine_synthesize_project(
     let peak = master_buffer
         .iter()
         .fold(0.0f64, |max, &val| max.max(val.abs()));
-    if peak > 1.0 {
-        for sample in master_buffer.iter_mut() {
-            *sample /= peak;
+    if peak > 0.001 {
+        let target_peak = 0.95;
+        let gain = target_peak / peak;
+        if peak < 0.8 || peak > 1.0 {
+            for sample in master_buffer.iter_mut() {
+                *sample *= gain;
+            }
         }
     }
 
