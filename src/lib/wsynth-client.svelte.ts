@@ -24,9 +24,9 @@ export class WSynthEngineClient {
 
     private constructor() {}
 
-    static async create(): Promise<WSynthEngineClient> {
+    static async create(wasmModule?: WebAssembly.Module): Promise<WSynthEngineClient> {
         const client = new WSynthEngineClient();
-        client._module = await WSynthModule();
+        client._module = await WSynthModule(wasmModule ? { wasmModule } : {});
         const Module = client._module as any;
         client._api = {
             init: Module.cwrap('wsynth_init', null, []),

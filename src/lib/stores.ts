@@ -124,9 +124,11 @@ export const setStatus = (message: string) => {
 	appState.update(state => ({ ...state, status: message }));
 };
 
-export const initializeClient = () => {
+export const initializeClient = async () => {
     if (!browser || synthesisWorker) return;
     setStatus('Initializing background worker...');
+    
+    const wasmModule = await getCompiledWasmModule();
     synthesisWorker = new Worker(new URL('./synthesis.worker.ts', import.meta.url), { type: 'module' });
 
     synthesisWorker.onmessage = async (e: MessageEvent) => {
@@ -170,7 +172,7 @@ export const initializeClient = () => {
         setStatus(`Critical worker error: ${e.message}`);
     };
 
-    synthesisWorker.postMessage({ type: 'init' });
+    synthesisWorker.postMessage({ type: 'init', payload: { wasmModule } });
 };
 
 export const loadVoicebank = async (
@@ -200,14 +202,16 @@ export const loadVoicebank = async (
 
         setStatus('oto.ini loaded. Starting parallel analysis of WAV files...');
 
+        const wasmModule = await getCompiledWasmModule();
+        const totalCores = navigator.hardwareConcurrency || 4;
         const analysisPromise = new Promise<void>((resolve, reject) => {
-            const totalCores = navigator.hardwareConcurrency || 4;
+            setStatus('Compiling WebAssembly module...');
             const currentSettings = get(settings);
             let numWorkers: number;
             if (currentSettings.project.analysisCoreCount > 0) {
                 numWorkers = Math.max(1, Math.min(currentSettings.project.analysisCoreCount, totalCores));
             } else {
-                const calculatedWorkers = Math.round(2 + totalCores * 0.1);
+                const calculatedWorkers = Math.round(2 + totalCores * 0.3);
                 numWorkers = Math.max(1, Math.min(calculatedWorkers, totalCores - 1));
             }
             const workers: Worker[] = [];
@@ -244,6 +248,9 @@ export const loadVoicebank = async (
                 worker.onmessage = onWorkerMessage;
                 worker.onerror = (e) => reject(new Error("Worker failed catastrophically."));
                 workers.push(worker);
+
+                worker.postMessage({ type: 'init_wasm', wasmModule });
+
                 if (filesToProcess.length > 0) {
                     const file = filesToProcess.pop()!;
                     worker.postMessage({ filename: file.name, wavData: file.data }, [file.data.buffer]);
@@ -585,3 +592,19 @@ export const setTempo = (tempo: number) => {
 export const setGridDivision = (gridDivision: number) => {
     appState.update(state => ({ ...state, gridDivision }));
 };
+
+
+let cachedWasmModule: WebAssembly.Module | null = null;
+export async function getCompiledWasmModule(): Promise<WebAssembly.Module> {
+    if (!cachedWasmModule) {
+        const wasmUrl = new URL('./w-synth.wasm', import.meta.url).href;
+        try {
+            cachedWasmModule = await WebAssembly.compileStreaming(fetch(wasmUrl));
+        } catch {
+            const res = await fetch(wasmUrl);
+            const bytes = await res.arrayBuffer();
+            cachedWasmModule = await WebAssembly.compile(bytes);
+        }
+    }
+    return cachedWasmModule;
+}

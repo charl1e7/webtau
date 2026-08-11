@@ -11,7 +11,7 @@ self.onmessage = async (e: MessageEvent) => {
         switch (type) {
             case 'init':
                 if (!client) {
-                    client = await WSynthEngineClient.create();
+                    client = await WSynthEngineClient.create(payload?.wasmModule);
                     enginePtr = client.createEngine();
                     if (!enginePtr) throw new Error("Failed to create engine in worker.");
                     self.postMessage({ type: 'init_done' });
