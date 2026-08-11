@@ -39,24 +39,24 @@ pub fn render_note(
     let render_preutterance_ms = if prev_note_overlap_ms > 0.0 {
         src_preutterance_ms.min(prev_note_overlap_ms + 10.0)
     } else {
-        src_preutterance_ms.min(25.0) 
+        src_preutterance_ms.min(25.0)
     };
     let preutterance_trim_ms = src_preutterance_ms - render_preutterance_ms;
     let effective_src_offset_sec = (src_offset_ms + preutterance_trim_ms) / 1000.0;
 
     let out_fixed_dur_ms = src_consonant_ms;
     let out_stretch_dur_ms = (current_note.duration - out_fixed_dur_ms).max(0.0);
-    
-    let total_render_duration_ms = current_note.duration + render_preutterance_ms;
+
+    let current_fade_out_ms = if has_next_note_for_crossfade {
+        src_overlap_ms.max(30.0)
+    } else {
+        20.0 
+    };
+
+    let total_render_duration_ms = render_preutterance_ms + current_note.duration + current_fade_out_ms;
 
     let src_stretch_start_point_sec = (src_offset_ms + src_preutterance_ms) / 1000.0;
     let src_stretch_end_point_sec = (src_offset_ms + src_consonant_ms) / 1000.0;
-    let src_cutoff_sec = if oto_entry.cutoff >= 0.0 {
-        oto_entry.cutoff / 1000.0
-    } else {
-        feature_len_sec + (oto_entry.cutoff / 1000.0)
-    }
-    .clamp(src_stretch_end_point_sec, feature_len_sec);
 
     let src_stretch_part_len_sec =
         (src_stretch_end_point_sec - src_stretch_start_point_sec).max(0.001);
@@ -90,7 +90,7 @@ pub fn render_note(
         );
         t_render.push(clamped_src_time_sec * fps);
     }
-    
+
     if t_render.is_empty() {
         return Err(anyhow!("Note duration is zero"));
     }
@@ -193,7 +193,6 @@ pub fn render_note(
         })
         .collect();
 
-    let feature_dim = (consts::FFT_SIZE / 2 + 1) as usize;
     let mut sp_render = rsworld::decode_spectral_envelope(
         &mgc_render,
         render_length as i32,
@@ -216,20 +215,11 @@ pub fn render_note(
         .zip(syn_aperiodic.iter())
         .map(|(hm, wh)| (hm * harmonic_mix + wh) * volume)
         .collect();
-    let current_fade_in_ms = prev_note_overlap_ms.clamp(0.0, 10.0);
-    let current_fade_out_ms = if has_next_note_for_crossfade {
-        oto_entry.overlap
-    } else {
-        0.0
-    };
 
     apply_crossfade_envelopes(
         &mut syn,
-        current_fade_in_ms,
+        render_preutterance_ms,
         current_fade_out_ms,
-        src_preutterance_ms,
-        current_note.duration,
-        current_note.alias.starts_with("-"),
     );
 
     Ok(syn)
@@ -239,9 +229,6 @@ fn apply_crossfade_envelopes(
     pcm: &mut Vec<f64>,
     fade_in_len_ms: f64,
     fade_out_len_ms: f64,
-    preutterance_ms_in_pcm: f64,
-    note_duration_ms: f64,
-    is_initial_note_alias: bool,
 ) {
     let sample_rate = consts::SAMPLE_RATE as f64;
     let total_smp = pcm.len();
@@ -249,8 +236,7 @@ fn apply_crossfade_envelopes(
         return;
     }
 
-    // FADE IN
-    if fade_in_len_ms > 0.0 && !is_initial_note_alias {
+    if fade_in_len_ms > 0.0 {
         let fade_in_len_smp = (fade_in_len_ms / 1000.0 * sample_rate).round() as usize;
         let effective_len = fade_in_len_smp.min(total_smp);
         for i in 0..effective_len {
@@ -259,20 +245,14 @@ fn apply_crossfade_envelopes(
         }
     }
 
-    // FADE OUT
     if fade_out_len_ms > 0.0 {
         let fade_out_len_smp = (fade_out_len_ms / 1000.0 * sample_rate).round() as usize;
-        let note_body_end_ms = preutterance_ms_in_pcm + note_duration_ms;
-        let fade_out_start_smp = (note_body_end_ms / 1000.0 * sample_rate).round() as usize;
-        let actual_fade_start_smp = fade_out_start_smp.max(0).min(total_smp);
-        let effective_len = (total_smp - actual_fade_start_smp).min(fade_out_len_smp);
+        let effective_len = fade_out_len_smp.min(total_smp);
+        let start_smp = total_smp - effective_len;
 
         for i in 0..effective_len {
-            let index = actual_fade_start_smp + i;
-            if index < total_smp {
-                let ratio = i as f64 / (effective_len - 1).max(1) as f64;
-                pcm[index] *= (std::f64::consts::PI / 2.0 * (1.0 - ratio)).sin();
-            }
+            let ratio = i as f64 / (effective_len - 1).max(1) as f64;
+            pcm[start_smp + i] *= (std::f64::consts::PI / 2.0 * (1.0 - ratio)).sin();
         }
     }
 }
