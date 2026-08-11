@@ -35,22 +35,32 @@ pub fn render_note(
     let src_consonant_ms = oto_entry.consonant;
     let src_preutterance_ms = oto_entry.preutterance;
     let src_overlap_ms = oto_entry.overlap;
+
+    let render_preutterance_ms = if prev_note_overlap_ms > 0.0 {
+        src_preutterance_ms.min(prev_note_overlap_ms + 10.0)
+    } else {
+        src_preutterance_ms.min(25.0) 
+    };
+    let preutterance_trim_ms = src_preutterance_ms - render_preutterance_ms;
+    let effective_src_offset_sec = (src_offset_ms + preutterance_trim_ms) / 1000.0;
+
     let out_fixed_dur_ms = src_consonant_ms;
     let out_stretch_dur_ms = (current_note.duration - out_fixed_dur_ms).max(0.0);
-    let total_render_duration_ms = current_note.duration + src_overlap_ms;
-    let src_offset_sec = src_offset_ms / 1000.0;
-    let src_stretch_start_point_sec = src_offset_sec + (src_preutterance_ms / 1000.0);
-    let src_stretch_end_point_sec = src_offset_sec + (src_consonant_ms / 1000.0);
+    
+    let total_render_duration_ms = current_note.duration + render_preutterance_ms;
+
+    let src_stretch_start_point_sec = (src_offset_ms + src_preutterance_ms) / 1000.0;
+    let src_stretch_end_point_sec = (src_offset_ms + src_consonant_ms) / 1000.0;
     let src_cutoff_sec = if oto_entry.cutoff >= 0.0 {
         oto_entry.cutoff / 1000.0
     } else {
         feature_len_sec + (oto_entry.cutoff / 1000.0)
     }
     .clamp(src_stretch_end_point_sec, feature_len_sec);
-    let src_preutterance_part_len_sec = (src_stretch_start_point_sec - src_offset_sec).max(0.0);
+
     let src_stretch_part_len_sec =
         (src_stretch_end_point_sec - src_stretch_start_point_sec).max(0.001);
-    let src_tail_len_sec = (feature_len_sec - src_cutoff_sec).max(0.0);
+
     let total_render_frames = (total_render_duration_ms / 1000.0 * fps).round() as usize;
     let mut t_render: Vec<f64> = Vec::with_capacity(total_render_frames);
 
@@ -58,10 +68,10 @@ pub fn render_note(
         let current_out_time_ms = i as f64 * consts::FRAME_PERIOD;
         let src_time_sec: f64;
 
-        if current_out_time_ms < src_preutterance_ms {
-            src_time_sec = src_offset_sec + (current_out_time_ms / 1000.0);
-        } else if current_out_time_ms < src_preutterance_ms + out_stretch_dur_ms {
-            let time_in_stretch_out = current_out_time_ms - src_preutterance_ms;
+        if current_out_time_ms < render_preutterance_ms {
+            src_time_sec = effective_src_offset_sec + (current_out_time_ms / 1000.0);
+        } else if current_out_time_ms < render_preutterance_ms + out_stretch_dur_ms {
+            let time_in_stretch_out = current_out_time_ms - render_preutterance_ms;
             let ratio = if out_stretch_dur_ms > 0.0 {
                 time_in_stretch_out / out_stretch_dur_ms
             } else {
@@ -70,7 +80,7 @@ pub fn render_note(
             src_time_sec = src_stretch_start_point_sec + ratio * src_stretch_part_len_sec;
         } else {
             let time_in_fixed_end_out =
-                current_out_time_ms - (src_preutterance_ms + out_stretch_dur_ms);
+                current_out_time_ms - (render_preutterance_ms + out_stretch_dur_ms);
             src_time_sec = src_stretch_end_point_sec + (time_in_fixed_end_out / 1000.0);
         }
 
@@ -80,7 +90,7 @@ pub fn render_note(
         );
         t_render.push(clamped_src_time_sec * fps);
     }
-
+    
     if t_render.is_empty() {
         return Err(anyhow!("Note duration is zero"));
     }
@@ -206,11 +216,7 @@ pub fn render_note(
         .zip(syn_aperiodic.iter())
         .map(|(hm, wh)| (hm * harmonic_mix + wh) * volume)
         .collect();
-    let current_fade_in_ms = if prev_note_overlap_ms > 0.0 {
-        prev_note_overlap_ms
-    } else {
-        0.0
-    };
+    let current_fade_in_ms = prev_note_overlap_ms.clamp(0.0, 10.0);
     let current_fade_out_ms = if has_next_note_for_crossfade {
         oto_entry.overlap
     } else {
