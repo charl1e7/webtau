@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from './Icon.svelte';
 	import Stepper from './Stepper.svelte';
 	import { DEFAULT_VIBRATO, gridTicks, noteEnd, noteName } from '#lib/core/music';
 	import { getFlag, setFlag } from '#lib/core/flags';
@@ -35,6 +36,12 @@
 
 	const breath = $derived(flags === undefined ? undefined : getFlag(flags, 'B'));
 	const pitchOffset = $derived(flags === undefined ? undefined : getFlag(flags, 't'));
+
+	const FLAG_SLIDERS = [
+		{ flag: 'g', label: 'Gender (g): − deeper, + brighter', min: -100, max: 100, step: 1 },
+		{ flag: 'A', label: 'Amplitude follows pitch (A)', min: -100, max: 100, step: 1 },
+		{ flag: 'fe', label: 'Vocal fry length at the end (fe, ms)', min: 0, max: 800, step: 10 }
+	];
 
 	const vib = $derived(sel.length && sel.every((n) => n.vibrato) ? sel[0].vibrato : null);
 	const anyVib = $derived(sel.some((n) => n.vibrato));
@@ -110,6 +117,67 @@
 				<span class="hint">{project.tempos.length - 1} more tempo change(s) on the ruler.</span>
 			{/if}
 		</div>
+		<h3>Tracks</h3>
+		<div class="tracks">
+			{#each project.tracks as t (t.id)}
+				<div class="track" class:active={t.id === project.activeTrack}>
+					<button
+						class="swatch"
+						style:background={t.color}
+						title="Make this track active"
+						aria-label="Make {t.name} the active track"
+						onclick={() => (project.activeTrack = t.id)}
+					></button>
+					<input
+						type="text"
+						value={t.name}
+						aria-label="Track name"
+						onchange={(e) =>
+							e.currentTarget.value.trim() &&
+							project.updateTrack(t.id, { name: e.currentTarget.value.trim() })}
+					/>
+					<button
+						class="icon-btn small"
+						class:active={t.mute}
+						title="Mute"
+						aria-label="Mute {t.name}"
+						aria-pressed={t.mute}
+						onclick={() => project.updateTrack(t.id, { mute: !t.mute })}>M</button
+					>
+					<button
+						class="icon-btn small"
+						class:active={t.solo}
+						title="Solo"
+						aria-label="Solo {t.name}"
+						aria-pressed={t.solo}
+						onclick={() => project.updateTrack(t.id, { solo: !t.solo })}>S</button
+					>
+					<button
+						class="icon-btn small"
+						title="Delete track"
+						aria-label="Delete {t.name}"
+						disabled={project.tracks.length < 2}
+						onclick={() =>
+							confirm(`Delete “${t.name}” and its notes?`) && project.removeTrack(t.id)}
+					>
+						<Icon name="trash" size={15} />
+					</button>
+					<input
+						class="vol"
+						type="range"
+						min="0"
+						max="150"
+						value={t.volume}
+						aria-label="{t.name} volume"
+						oninput={(e) =>
+							project.updateTrack(t.id, { volume: Number(e.currentTarget.value) }, `vol-${t.id}`)}
+					/>
+				</div>
+			{/each}
+			<button class="btn" onclick={() => project.addTrack()}
+				><Icon name="plus" size={16} /> Add track</button
+			>
+		</div>
 		<div class="field">
 			<span class="label">Summary</span>
 			<span class="hint">
@@ -151,6 +219,22 @@
 				<span class="warn">Not found in the voicebank.</span>
 			{/if}
 		</div>
+
+		{#if project.tracks.length > 1}
+			<div class="field">
+				<label for="note-track">Track</label>
+				<select
+					id="note-track"
+					value={common('track') ?? ''}
+					onchange={(e) => project.moveSelectionToTrack(e.currentTarget.value)}
+				>
+					{#if common('track') === undefined}<option value="" disabled>mixed</option>{/if}
+					{#each project.tracks as t (t.id)}
+						<option value={t.id}>{t.name}</option>
+					{/each}
+				</select>
+			</div>
+		{/if}
 
 		<div class="grid2">
 			<div class="field">
@@ -236,6 +320,21 @@
 				oninput={(e) => patchFlag('t', Number(e.currentTarget.value) || undefined)}
 			/>
 		</div>
+		{#each FLAG_SLIDERS as f (f.flag)}
+			{@const value = flags === undefined ? undefined : getFlag(flags, f.flag)}
+			<div class="field">
+				<span class="label">{f.label} · {value ?? 'off'}</span>
+				<input
+					type="range"
+					min={f.min}
+					max={f.max}
+					step={f.step}
+					value={value ?? 0}
+					aria-label={f.label}
+					oninput={(e) => patchFlag(f.flag, Number(e.currentTarget.value) || undefined)}
+				/>
+			</div>
+		{/each}
 		<div class="field">
 			<label for="flags">Raw flags</label>
 			<input
@@ -310,6 +409,42 @@
 		text-transform: uppercase;
 		letter-spacing: 0.14em;
 		color: var(--accent-2);
+	}
+	.tracks {
+		display: grid;
+		gap: 10px;
+		margin-bottom: 14px;
+	}
+	.track {
+		display: grid;
+		grid-template-columns: 22px 1fr auto auto auto;
+		gap: 4px 6px;
+		align-items: center;
+		padding: 8px;
+		border: 1px solid var(--border);
+		border-radius: 12px;
+		background: var(--panel-2);
+	}
+	.track.active {
+		border-color: var(--accent);
+		box-shadow: var(--glow);
+	}
+	.track .vol {
+		grid-column: 2 / -1;
+	}
+	.swatch {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		box-shadow:
+			0 0 0 2px var(--panel),
+			0 0 10px currentColor;
+	}
+	.icon-btn.small {
+		width: 30px;
+		height: 30px;
+		font-size: 12px;
+		font-weight: 700;
 	}
 	.grid2 {
 		display: grid;

@@ -234,6 +234,16 @@
 {:else if ui.dialog === 'midi' && midiData}
 	<Dialog title="Import MIDI — choose a track" onclose={ui.closeDialog} width={440}>
 		<div class="tracks">
+			<button
+				class="btn primary track"
+				onclick={() => {
+					ui.closeDialog();
+					file.applyMidiAll(midiData.midi, midiData.fileName);
+				}}
+			>
+				<strong>All tracks</strong>
+				<span class="hint">as separate tracks</span>
+			</button>
 			{#each midiData.midi.tracks.filter((t) => t.noteCount > 0) as t (t.index)}
 				<button
 					class="btn track"

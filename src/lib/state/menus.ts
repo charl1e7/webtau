@@ -8,6 +8,7 @@ import { settings } from './settings.svelte';
 import { view } from './view.svelte';
 import { voicebank } from './voicebank.svelte';
 import { getEngine } from './engine';
+import { TRACK_COLORS } from '#lib/core/music';
 
 const sep: MenuItem = { separator: true };
 
@@ -19,6 +20,7 @@ export function fileMenu(): MenuItem[] {
 		sep,
 		{ label: 'Import UST…', icon: 'upload', action: file.importUst },
 		{ label: 'Import MIDI…', icon: 'upload', action: file.importMidi },
+		{ label: 'Import VSQX (VOCALOID)…', icon: 'upload', action: file.importVsqx },
 		sep,
 		{ label: 'Export WAV', icon: 'download', hint: 'Ctrl+E', action: file.exportWav },
 		{ label: 'Export UST', icon: 'download', action: file.exportUst },
@@ -208,6 +210,7 @@ export function mainMenu(): MenuItem[] {
 	return [
 		{ label: 'File', children: fileMenu() },
 		{ label: 'Edit', children: editMenu() },
+		{ label: 'Tracks', icon: 'music', children: trackMenu() },
 		{
 			label: 'Voicebank',
 			children: [
@@ -231,5 +234,50 @@ export function mainMenu(): MenuItem[] {
 		{ label: 'Settings', icon: 'settings', action: () => ui.openDialog('settings') },
 		{ label: 'Keyboard shortcuts', icon: 'keyboard', action: () => ui.openDialog('shortcuts') },
 		{ label: 'About WebTAU', icon: 'info', action: () => ui.openDialog('about') }
+	];
+}
+
+/** Menu to switch, add and configure tracks. */
+export function trackMenu(): MenuItem[] {
+	const active = project.tracks.find((t) => t.id === project.activeTrack) ?? project.tracks[0];
+	return [
+		...project.tracks.map((t): MenuItem => ({
+			label: `${t.name}${t.mute ? ' (muted)' : ''}${t.solo ? ' (solo)' : ''}`,
+			checked: t.id === active.id,
+			action: () => (project.activeTrack = t.id)
+		})),
+		sep,
+		{ label: 'Add track', icon: 'plus', action: () => project.addTrack() },
+		{
+			label: active.mute ? 'Unmute active track' : 'Mute active track',
+			action: () => project.updateTrack(active.id, { mute: !active.mute })
+		},
+		{
+			label: active.solo ? 'Unsolo active track' : 'Solo active track',
+			action: () => project.updateTrack(active.id, { solo: !active.solo })
+		},
+		{
+			label: 'Rename active track…',
+			action: () => {
+				const name = prompt('Track name', active.name)?.trim();
+				if (name) project.updateTrack(active.id, { name });
+			}
+		},
+		{
+			label: 'Track colour',
+			children: TRACK_COLORS.map((color, i): MenuItem => ({
+				label: `Colour ${i + 1}${color === active.color ? ' ✓' : ''}`,
+				action: () => project.updateTrack(active.id, { color })
+			}))
+		},
+		{
+			label: 'Delete active track',
+			icon: 'trash',
+			danger: true,
+			disabled: project.tracks.length < 2,
+			action: () => {
+				if (confirm(`Delete “${active.name}” and its notes?`)) project.removeTrack(active.id);
+			}
+		}
 	];
 }

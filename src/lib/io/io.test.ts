@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseUst, serializeUst } from './ust';
 import { parseMidi, serializeMidi } from './midi';
+import { parseVsqx } from './vsqx';
 import { parseProject, serializeProject } from './project-file';
-import { createNote, createPitchPoint } from '#lib/core/music';
+import { createNote, createPitchPoint, createTrack } from '#lib/core/music';
 
 const SAMPLE_UST = `[#VERSION]
 UST Version1.2
@@ -108,11 +109,12 @@ describe('MIDI', () => {
 			createNote({ tick: 0, length: 480, pitch: 60, lyric: 'do' }),
 			createNote({ tick: 480, length: 240, pitch: 67, lyric: 're' })
 		];
-		const bytes = serializeMidi(notes, [{ tick: 0, bpm: 90 }], 'Song');
+		const bytes = serializeMidi([{ name: 'Lead', notes }], [{ tick: 0, bpm: 90 }], 'Song');
 		const midi = parseMidi(bytes);
 		expect(midi.tempos[0].bpm).toBe(90);
-		expect(midi.tracks[0].name).toBe('Song');
-		expect(midi.tracks[0].notes.map((n) => [n.tick, n.length, n.pitch, n.lyric])).toEqual([
+		const lead = midi.tracks.find((t) => t.noteCount > 0)!;
+		expect(lead.name).toBe('Lead');
+		expect(lead.notes.map((n) => [n.tick, n.length, n.pitch, n.lyric])).toEqual([
 			[0, 480, 60, 'do'],
 			[480, 240, 67, 're']
 		]);
@@ -134,6 +136,7 @@ describe('project file', () => {
 		const text = serializeProject({
 			name: 'p',
 			notes: [n],
+			tracks: [createTrack(0), createTrack(1, { name: 'Harmony', mute: true })],
 			tempos: [{ tick: 0, bpm: 100 }],
 			timeSignature: { numerator: 3, denominator: 4 },
 			voicebank: 'vb'
@@ -142,6 +145,45 @@ describe('project file', () => {
 		expect(back.notes[0]).toMatchObject({ tick: 10, length: 100, pitch: 61 });
 		expect(back.notes[0].pitchPoints[0]).toMatchObject({ x: 0, y: 50, shape: 's' });
 		expect(back.timeSignature.numerator).toBe(3);
+		expect(back.tracks.map((t) => [t.name, t.mute])).toEqual([
+			['Track 1', false],
+			['Harmony', true]
+		]);
 		expect(() => parseProject('{"format":"nope"}')).toThrow();
+	});
+});
+
+const VSQX = `<?xml version="1.0" encoding="UTF-8"?>
+<vsq4 xmlns="http://www.yamaha.co.jp/vocaloid/schema/vsq4/">
+<masterTrack><resolution>480</resolution><preMeasure>4</preMeasure>
+<timeSig><posMes>0</posMes><nume>3</nume><denomi>4</denomi></timeSig>
+<tempo><posTick>0</posTick><bpm>9000</bpm></tempo>
+<tempo><posTick>7200</posTick><bpm>12000</bpm></tempo></masterTrack>
+<vsTrack><vsTrackNo>0</vsTrackNo><trackName><![CDATA[x]]></trackName><name><![CDATA[Lead]]></name>
+<musicalPart><posTick>5760</posTick><playTime>1920</playTime>
+<note><posTick>0</posTick><durTick>480</durTick><noteNum>64</noteNum><velocity>64</velocity><lyric><![CDATA[ら]]></lyric></note>
+<note><posTick>480</posTick><durTick>240</durTick><noteNum>66</noteNum><y><![CDATA[la &amp; la]]></y></note>
+</musicalPart></vsTrack>
+<vsTrack><vsTrackNo>1</vsTrackNo><name><![CDATA[Empty]]></name></vsTrack>
+</vsq4>`;
+
+describe('VSQX', () => {
+	it('parses notes, lyrics, tempo and removes the pre-measure', () => {
+		const v = parseVsqx(VSQX);
+		expect(v.timeSignature).toEqual({ numerator: 3, denominator: 4 });
+		expect(v.tempos).toEqual([
+			{ tick: 0, bpm: 90 },
+			{ tick: 1440, bpm: 120 }
+		]);
+		expect(v.tracks).toHaveLength(1);
+		expect(v.tracks[0].name).toBe('Lead');
+		expect(v.tracks[0].notes.map((n) => [n.tick, n.length, n.pitch, n.lyric])).toEqual([
+			[0, 480, 64, 'ら'],
+			[480, 240, 66, 'la & la']
+		]);
+	});
+
+	it('rejects other XML', () => {
+		expect(() => parseVsqx('<xml/>')).toThrow();
 	});
 });

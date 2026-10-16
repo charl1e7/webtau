@@ -58,7 +58,7 @@ class PlaybackState {
 		this.job?.cancel();
 
 		const key = this.key();
-		const { notes, ids } = toEngineNotes(project.notes, project.tempoMap);
+		const { notes, ids } = toEngineNotes(project.notes, project.tempoMap, project.tracks);
 		this.status = 'analyzing';
 		this.progress = 0;
 		this.message = 'Preparing samples…';
@@ -210,6 +210,110 @@ class PlaybackState {
 
 	seekTick(tick: number) {
 		this.seekMs(project.tempoMap.tickToMs(Math.max(0, tick)));
+	}
+
+	// ---- note preview (piano keys) -------------------------------------------
+
+	private previewCache = new Map<string, AudioBuffer>();
+	private previewing = new Set<string>();
+	private previewSource: AudioBufferSourceNode | null = null;
+	private stopBeep: (() => void) | null = null;
+
+	/**
+	 * Plays a short note when a piano key is pressed: with the loaded voicebank
+	 * if the lyric exists there, otherwise as a plain tone.
+	 */
+	async preview(pitch: number) {
+		this.ctx ??= new AudioContext({ latencyHint: 'interactive' });
+		void this.ctx.resume();
+		const lyric = (project.selectedNotes[0]?.lyric || settings.data.defaultLyric || 'a').trim();
+		const key = `${voicebank.revision}|${lyric}|${pitch}`;
+		this.stopPreview();
+
+		const cached = this.previewCache.get(key);
+		if (cached) return this.playPreview(cached);
+		if (!voicebank.current || this.previewing.has(key)) return this.beep(pitch);
+
+		this.previewing.add(key);
+		const pressedAt = performance.now();
+		this.beep(pitch); // instant feedback while the voice is rendered
+		try {
+			const engine = await getEngine();
+			const note = {
+				alias: lyric,
+				pitch,
+				start_time: 0,
+				duration: 500,
+				pitchbend: [],
+				flags: '',
+				velocity: 100,
+				volume: 100,
+				modulation: 0
+			};
+			const out = await engine.render([note], project.primaryTempo).promise;
+			if (!out || out.report.missing_alias.length || out.report.missing_features.length) return;
+			const samples = out.pcm.subarray(0, Math.floor(SAMPLE_RATE * 0.75));
+			const buffer = new AudioBuffer({ length: samples.length, sampleRate: SAMPLE_RATE });
+			buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, 0);
+			if (this.previewCache.size > 80)
+				this.previewCache.delete(this.previewCache.keys().next().value!);
+			this.previewCache.set(key, buffer);
+			// If the voice is ready quickly it replaces the beep; later it is just cached.
+			if (performance.now() - pressedAt < 1200) {
+				this.stopPreview();
+				this.playPreview(buffer);
+			}
+		} catch {
+			/* the beep already played */
+		} finally {
+			this.previewing.delete(key);
+		}
+	}
+
+	private playPreview(buffer: AudioBuffer) {
+		if (!this.ctx) return;
+		const source = this.ctx.createBufferSource();
+		source.buffer = buffer;
+		source.connect(this.ctx.destination);
+		source.onended = () => {
+			if (this.previewSource === source) this.previewSource = null;
+		};
+		source.start();
+		this.previewSource = source;
+	}
+
+	private beep(pitch: number) {
+		const ctx = this.ctx;
+		if (!ctx) return;
+		const osc = ctx.createOscillator();
+		const gain = ctx.createGain();
+		osc.type = 'triangle';
+		osc.frequency.value = 440 * 2 ** ((pitch - 69) / 12);
+		const t = ctx.currentTime;
+		gain.gain.setValueAtTime(0, t);
+		gain.gain.linearRampToValueAtTime(0.18, t + 0.01);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+		osc.connect(gain).connect(ctx.destination);
+		osc.start(t);
+		osc.stop(t + 0.5);
+		this.previewSource = {
+			stop: () => osc.stop(),
+			onended: null
+		} as unknown as AudioBufferSourceNode;
+		osc.onended = () => {
+			if (this.previewSource && 'stop' in this.previewSource) this.previewSource = null;
+		};
+	}
+
+	private stopPreview() {
+		try {
+			this.previewSource?.stop();
+			this.stopBeep?.();
+		} catch {
+			/* already stopped */
+		}
+		this.previewSource = null;
+		this.stopBeep = null;
 	}
 
 	// ---- export ---------------------------------------------------------------------

@@ -1,20 +1,23 @@
 import { browser } from '$app/env';
 import { History } from '#lib/core/history';
 import { TempoMap } from '#lib/core/tempo';
-import { cloneNote, createNote } from '#lib/core/music';
+import { cloneNote, createNote, createTrack, TRACK_COLORS } from '#lib/core/music';
 import { pasteNotes, sortNotes } from '#lib/core/ops';
 import {
+	DEFAULT_TRACK_ID,
 	PPQ,
 	type Note,
 	type ProjectData,
 	type TempoChange,
-	type TimeSignature
+	type TimeSignature,
+	type Track
 } from '#lib/core/types';
 
 interface Snapshot {
 	notes: Note[];
 	tempos: TempoChange[];
 	timeSignature: TimeSignature;
+	tracks: Track[];
 }
 
 const AUTOSAVE_KEY = 'webtau:autosave';
@@ -25,6 +28,9 @@ export class ProjectState {
 	notes = $state.raw<Note[]>([]);
 	tempos = $state.raw<TempoChange[]>([{ tick: 0, bpm: 120 }]);
 	timeSignature = $state.raw<TimeSignature>({ numerator: 4, denominator: 4 });
+	tracks = $state.raw<Track[]>([createTrack(0)]);
+	/** Track that new notes are added to. */
+	activeTrack = $state(DEFAULT_TRACK_ID);
 	selection = $state.raw<ReadonlySet<string>>(new Set());
 
 	/** Increases with every change of the musical content; used to invalidate renders. */
@@ -49,13 +55,20 @@ export class ProjectState {
 	// ---- snapshots --------------------------------------------------------
 
 	private snapshot(): Snapshot {
-		return { notes: this.notes, tempos: this.tempos, timeSignature: this.timeSignature };
+		return {
+			notes: this.notes,
+			tempos: this.tempos,
+			timeSignature: this.timeSignature,
+			tracks: this.tracks
+		};
 	}
 
 	private restore(s: Snapshot) {
 		this.notes = s.notes;
 		this.tempos = s.tempos;
 		this.timeSignature = s.timeSignature;
+		this.tracks = s.tracks;
+		this.ensureActiveTrack();
 		const ids = new Set(s.notes.map((n) => n.id));
 		this.selection = new Set([...this.selection].filter((id) => ids.has(id)));
 		this.changed();
@@ -73,6 +86,7 @@ export class ProjectState {
 		return {
 			name: this.name,
 			notes: this.notes,
+			tracks: this.tracks,
 			tempos: this.tempos,
 			timeSignature: this.timeSignature,
 			voicebank: this.voicebankName
@@ -83,7 +97,14 @@ export class ProjectState {
 	load(data: Partial<ProjectData> & { notes: Note[] }) {
 		this.name = data.name ?? 'Untitled';
 		this.voicebankName = data.voicebank ?? this.voicebankName;
-		this.notes = sortNotes(data.notes);
+		const tracks = data.tracks?.length ? data.tracks : [createTrack(0)];
+		const known = new Set(tracks.map((t) => t.id));
+		// Notes that point to an unknown track fall back to the first one.
+		this.tracks = tracks;
+		this.activeTrack = tracks[0].id;
+		this.notes = sortNotes(
+			data.notes.map((n) => (known.has(n.track) ? n : { ...n, track: tracks[0].id }))
+		);
 		this.tempos = data.tempos?.length ? data.tempos : [{ tick: 0, bpm: 120 }];
 		this.timeSignature = data.timeSignature ?? { numerator: 4, denominator: 4 };
 		this.selection = new Set();
@@ -199,7 +220,7 @@ export class ProjectState {
 	// ---- common commands ---------------------------------------------------------
 
 	addNote(init: Partial<Note> & Pick<Note, 'tick' | 'pitch'>): Note {
-		const note = createNote(init);
+		const note = createNote({ track: this.activeTrack, ...init });
 		this.edit((notes) => [...notes, note]);
 		this.select([note.id]);
 		return note;
@@ -248,9 +269,75 @@ export class ProjectState {
 		});
 	}
 
+	/** Starts moving a tempo marker: one undo step for the whole drag. */
+	beginTempoDrag() {
+		this.record();
+	}
+
+	/** Moves the tempo change at `from` to `to` (the first one is fixed at tick 0). */
+	moveTempo(from: number, to: number) {
+		if (from === 0 || to <= 0 || from === to) return;
+		if (this.tempos.some((t) => t.tick === to)) return;
+		this.tempos = this.tempos
+			.map((t) => (t.tick === from ? { ...t, tick: to } : t))
+			.sort((a, b) => a.tick - b.tick);
+		this.changed();
+	}
+
 	removeTempo(tick: number) {
 		if (tick === 0) return;
 		this.editTempos((tempos) => tempos.filter((t) => t.tick !== tick));
+	}
+
+	// ---- tracks -------------------------------------------------------------------
+
+	private ensureActiveTrack() {
+		if (!this.tracks.some((t) => t.id === this.activeTrack)) this.activeTrack = this.tracks[0].id;
+	}
+
+	editTracks(update: (tracks: Track[]) => Track[]) {
+		const next = update([...this.tracks]);
+		if (!next.length) return;
+		this.record();
+		this.tracks = next;
+		this.ensureActiveTrack();
+		this.changed();
+	}
+
+	addTrack(name?: string): Track {
+		const used = new Set(this.tracks.map((t) => t.color));
+		const color = TRACK_COLORS.find((c) => !used.has(c));
+		const track = createTrack(this.tracks.length, {
+			...(name ? { name } : {}),
+			...(color ? { color } : {})
+		});
+		this.editTracks((tracks) => [...tracks, track]);
+		this.activeTrack = track.id;
+		return track;
+	}
+
+	updateTrack(id: string, patch: Partial<Track>, coalesce?: string) {
+		this.record(coalesce);
+		this.tracks = this.tracks.map((t) => (t.id === id ? { ...t, ...patch } : t));
+		this.changed();
+	}
+
+	/** Deletes a track together with its notes. The last track cannot be removed. */
+	removeTrack(id: string) {
+		if (this.tracks.length < 2) return;
+		this.record();
+		this.tracks = this.tracks.filter((t) => t.id !== id);
+		this.notes = this.notes.filter((n) => n.track !== id);
+		this.selection = new Set([...this.selection].filter((s) => this.notes.some((n) => n.id === s)));
+		this.ensureActiveTrack();
+		this.changed();
+	}
+
+	moveSelectionToTrack(id: string) {
+		const ids = this.selection;
+		this.edit((notes) =>
+			notes.map((n) => (ids.has(n.id) && n.track !== id ? { ...n, track: id } : n))
+		);
 	}
 
 	setTimeSignature(numerator: number, denominator: number) {

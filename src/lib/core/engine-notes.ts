@@ -1,21 +1,32 @@
 import type { EngineNote } from '#lib/engine/bridge';
 import { compilePitch } from './pitch';
 import type { TempoMap } from './tempo';
-import type { Note } from './types';
+import type { Note, Track } from './types';
+
+/** Whether the notes of `track` are heard, given every track's mute / solo state. */
+export function isAudible(track: Track | undefined, tracks: readonly Track[]): boolean {
+	if (!track) return true;
+	return tracks.some((t) => t.solo) ? track.solo : !track.mute;
+}
 
 /**
  * Converts editor notes into what the synthesis engine consumes: absolute
- * times in milliseconds and a flat pitch contour. `ids[i]` is the id of
- * `notes[i]`, so that reports from the engine can be mapped back.
+ * times in milliseconds and a flat pitch contour. Muted tracks are left out.
+ * `ids[i]` is the id of `notes[i]`, so that reports from the engine can be
+ * mapped back.
  */
 export function toEngineNotes(
 	source: readonly Note[],
-	tempoMap: TempoMap
+	tempoMap: TempoMap,
+	tracks: readonly Track[] = []
 ): { notes: EngineNote[]; ids: string[] } {
-	const sorted = [...source].sort((a, b) => a.tick - b.tick || a.pitch - b.pitch);
+	const byId = new Map(tracks.map((t, i) => [t.id, { track: t, index: i }]));
+	const audible = source.filter((n) => isAudible(byId.get(n.track)?.track, tracks));
+	const sorted = [...audible].sort((a, b) => a.tick - b.tick || a.pitch - b.pitch);
 	const notes = sorted.map((n) => {
 		const start = tempoMap.tickToMs(n.tick);
 		const duration = tempoMap.tickToMs(n.tick + n.length) - start;
+		const info = byId.get(n.track);
 		return {
 			alias: n.lyric,
 			pitch: n.pitch,
@@ -24,8 +35,9 @@ export function toEngineNotes(
 			pitchbend: compilePitch(n, duration),
 			flags: n.flags,
 			velocity: n.velocity,
-			volume: n.volume,
-			modulation: n.modulation
+			volume: (n.volume * (info?.track.volume ?? 100)) / 100,
+			modulation: n.modulation,
+			track: info?.index ?? 0
 		};
 	});
 	return { notes, ids: sorted.map((n) => n.id) };

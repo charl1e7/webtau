@@ -145,46 +145,61 @@ function vlq(n: number): number[] {
 const be = (n: number, bytes: number): number[] =>
 	Array.from({ length: bytes }, (_, i) => (n >> (8 * (bytes - 1 - i))) & 0xff);
 
-/** Writes a format-0 MIDI file containing the notes, lyrics and tempo map. */
+/** Writes a format-1 MIDI file: a tempo track followed by one track per input track. */
 export function serializeMidi(
-	notes: readonly Note[],
+	tracks: readonly { name: string; notes: readonly Note[] }[],
 	tempos: readonly TempoChange[],
 	name: string
 ) {
 	type Ev = { tick: number; order: number; bytes: number[] };
-	const events: Ev[] = [];
-	const text = (type: number, s: string, tick: number) => {
+	const chunk = (events: Ev[]) => {
+		events.sort((a, b) => a.tick - b.tick || a.order - b.order);
+		const body: number[] = [];
+		let last = 0;
+		for (const e of events) {
+			body.push(...vlq(e.tick - last), ...e.bytes);
+			last = e.tick;
+		}
+		body.push(0, 0xff, 0x2f, 0);
+		return [...Array.from('MTrk', (c) => c.charCodeAt(0)), ...be(body.length, 4), ...body];
+	};
+	const text = (events: Ev[], type: number, s: string, tick: number) => {
 		const data = Array.from(new TextEncoder().encode(s));
 		events.push({ tick, order: 0, bytes: [0xff, type, ...vlq(data.length), ...data] });
 	};
-	text(0x03, name, 0);
+
+	const conductor: Ev[] = [];
+	text(conductor, 0x03, name, 0);
 	for (const t of tempos) {
 		const mpqn = Math.round(60000000 / t.bpm);
-		events.push({ tick: t.tick, order: 0, bytes: [0xff, 0x51, 3, ...be(mpqn, 3)] });
+		conductor.push({ tick: t.tick, order: 0, bytes: [0xff, 0x51, 3, ...be(mpqn, 3)] });
 	}
-	for (const n of notes) {
-		if (n.lyric) text(0x05, n.lyric, n.tick);
-		events.push({ tick: n.tick, order: 2, bytes: [0x90, n.pitch & 0x7f, 100] });
-		events.push({ tick: n.tick + n.length, order: 1, bytes: [0x80, n.pitch & 0x7f, 0] });
-	}
-	events.sort((a, b) => a.tick - b.tick || a.order - b.order);
 
-	const body: number[] = [];
-	let last = 0;
-	for (const e of events) {
-		body.push(...vlq(e.tick - last), ...e.bytes);
-		last = e.tick;
-	}
-	body.push(0, 0xff, 0x2f, 0);
+	const chunks = [
+		conductor,
+		...tracks.map((track, index) => {
+			const events: Ev[] = [];
+			text(events, 0x03, track.name, 0);
+			const channel = index & 0x0f;
+			for (const n of track.notes) {
+				if (n.lyric) text(events, 0x05, n.lyric, n.tick);
+				events.push({ tick: n.tick, order: 2, bytes: [0x90 | channel, n.pitch & 0x7f, 100] });
+				events.push({
+					tick: n.tick + n.length,
+					order: 1,
+					bytes: [0x80 | channel, n.pitch & 0x7f, 0]
+				});
+			}
+			return events;
+		})
+	].map(chunk);
 
 	return new Uint8Array([
 		...Array.from('MThd', (c) => c.charCodeAt(0)),
 		...be(6, 4),
-		...be(0, 2),
 		...be(1, 2),
+		...be(chunks.length, 2),
 		...be(PPQ, 2),
-		...Array.from('MTrk', (c) => c.charCodeAt(0)),
-		...be(body.length, 4),
-		...body
+		...chunks.flat()
 	]);
 }

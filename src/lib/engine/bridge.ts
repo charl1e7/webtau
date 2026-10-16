@@ -13,6 +13,8 @@ export interface EngineNote {
 	velocity: number;
 	volume: number;
 	modulation: number;
+	/** Index of the track; notes only cross-fade within their own track. */
+	track?: number;
 }
 
 export interface RenderReport {

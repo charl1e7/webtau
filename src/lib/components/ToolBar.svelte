@@ -4,6 +4,7 @@
 	import { ui } from '#lib/state/ui.svelte';
 	import { view, type Tool } from '#lib/state/view.svelte';
 	import { project } from '#lib/state/project.svelte';
+	import { trackMenu } from '#lib/state/menus';
 	import { voicebank } from '#lib/state/voicebank.svelte';
 
 	const TOOLS: { id: Tool; icon: IconName; label: string; key: string }[] = [
@@ -18,6 +19,12 @@
 		d === 12 ? '1/8T' : d === 24 ? '1/16T' : d === 48 ? '1/32T' : `1/${d}`;
 
 	let { zoom }: { zoom: (fx: number, fy: number) => void } = $props();
+
+	const activeTrack = $derived(project.tracks.find((t) => t.id === project.activeTrack));
+	function openTracks(e: MouseEvent) {
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		ui.openMenu({ x: r.left, y: r.bottom + 4, items: trackMenu() });
+	}
 </script>
 
 <div class="toolbar" class:compact={ui.compact} role="toolbar" aria-label="Tools">
@@ -62,6 +69,11 @@
 	</div>
 
 	{#if !ui.compact}
+		<button class="btn track-chip" title="Tracks: switch, add, mute, solo" onclick={openTracks}>
+			<span class="swatch" style:background={activeTrack?.color}></span>
+			{activeTrack?.name}
+			<Icon name="chevronDown" size={14} />
+		</button>
 		<div class="group">
 			<button
 				class="icon-btn"
@@ -176,6 +188,19 @@
 		background: transparent;
 		font-weight: 600;
 		color: var(--text);
+	}
+	.track-chip {
+		min-height: 36px;
+		padding: 0 12px;
+		border-radius: 12px;
+		max-width: 180px;
+	}
+	.swatch {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		box-shadow: 0 0 8px currentColor;
+		flex: none;
 	}
 	.info {
 		color: var(--muted);

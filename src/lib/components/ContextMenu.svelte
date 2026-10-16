@@ -84,7 +84,10 @@
 					onclick={() => pick(item)}
 				>
 					<span class="icon"
-						>{#if item.icon}<Icon name={item.icon as IconName} size={17} />{/if}</span
+						>{#if item.checked}<Icon name="check" size={17} />{:else if item.icon}<Icon
+								name={item.icon as IconName}
+								size={17}
+							/>{/if}</span
 					>
 					<span class="label">{item.label}</span>
 					{#if item.hint && !ui.compact}<span class="hint">{item.hint}</span>{/if}

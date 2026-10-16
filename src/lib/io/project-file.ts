@@ -1,4 +1,5 @@
-import { PPQ, type Note, type ProjectData } from '#lib/core/types';
+import { DEFAULT_TRACK_ID, PPQ, type Note, type ProjectData, type Track } from '#lib/core/types';
+import { createTrack } from '#lib/core/music';
 import { uid } from '#lib/core/ids';
 
 const FORMAT = 'webtau-project';
@@ -11,6 +12,7 @@ export function serializeProject(data: ProjectData): string {
 function normalizeNote(raw: Partial<Note>): Note {
 	return {
 		id: uid(),
+		track: raw.track ?? DEFAULT_TRACK_ID,
 		tick: Math.max(0, Math.round(raw.tick ?? 0)),
 		length: Math.max(1, Math.round(raw.length ?? PPQ / 2)),
 		pitch: Math.round(raw.pitch ?? 60),
@@ -32,8 +34,14 @@ function normalizeNote(raw: Partial<Note>): Note {
 export function parseProject(text: string): ProjectData {
 	const raw = JSON.parse(text);
 	if (raw?.format !== FORMAT) throw new Error('This is not a WebTAU project file.');
+	const tracks: Track[] = raw.tracks?.length
+		? raw.tracks.map((t: Partial<Track>, i: number) =>
+				createTrack(i, { ...t, id: t.id ?? createTrack(i).id })
+			)
+		: [createTrack(0)];
 	return {
 		name: raw.name ?? 'Untitled',
+		tracks,
 		notes: (raw.notes ?? []).map(normalizeNote),
 		tempos: raw.tempos?.length ? raw.tempos : [{ tick: 0, bpm: 120 }],
 		timeSignature: raw.timeSignature ?? { numerator: 4, denominator: 4 },
