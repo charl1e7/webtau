@@ -30,7 +30,7 @@
 	});
 
 	function pick(item: MenuItem) {
-		if (item.disabled || performance.now() - openedAt < 400) return;
+		if (item.disabled || (menu?.guard && performance.now() - openedAt < 400)) return;
 		if (item.children) {
 			stack = [...stack, { title: item.label ?? '', items: item.children }];
 			return;

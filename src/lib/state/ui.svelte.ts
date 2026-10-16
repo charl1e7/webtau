@@ -26,6 +26,8 @@ export interface MenuRequest {
 	x: number;
 	y: number;
 	items: MenuItem[];
+	/** Ignore taps for a moment: set when the menu was opened by a long-press, whose lifting finger would otherwise hit an item. */
+	guard?: boolean;
 }
 
 class UiState {
@@ -76,42 +78,43 @@ class UiState {
 		coarse.addEventListener('change', sync);
 	}
 
-	togglePanel(panel: Exclude<Panel, null>) {
+	// Methods are arrow functions so they keep `this` when passed as event handlers.
+	togglePanel = (panel: Exclude<Panel, null>) => {
 		this.panel = this.panel === panel ? null : panel;
-	}
+	};
 
-	openDialog(name: Exclude<DialogName, null>, data: unknown = null) {
+	openDialog = (name: Exclude<DialogName, null>, data: unknown = null) => {
 		this.dialogData = data;
 		this.dialog = name;
-	}
+	};
 
-	closeDialog() {
+	closeDialog = () => {
 		this.dialog = null;
 		this.dialogData = null;
-	}
+	};
 
-	openMenu(request: MenuRequest) {
+	openMenu = (request: MenuRequest) => {
 		this.menu = request;
-	}
+	};
 
-	closeMenu() {
+	closeMenu = () => {
 		this.menu = null;
-	}
+	};
 
-	toast(text: string, kind: Toast['kind'] = 'info', ms = 3600) {
+	toast = (text: string, kind: Toast['kind'] = 'info', ms = 3600) => {
 		const id = ++this.toastId;
 		this.toasts = [...this.toasts.slice(-3), { id, text, kind }];
 		this.status = text;
 		setTimeout(() => (this.toasts = this.toasts.filter((t) => t.id !== id)), ms);
-	}
+	};
 
-	error(text: string) {
+	error = (text: string) => {
 		this.toast(text, 'error', 6000);
-	}
+	};
 
-	setStatus(text: string) {
+	setStatus = (text: string) => {
 		this.status = text;
-	}
+	};
 }
 
 export const ui = new UiState();

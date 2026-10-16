@@ -433,18 +433,24 @@ export class RollController {
 			if (['move', 'resize', 'draw', 'point'].includes(g.kind)) project.cancelGesture();
 			this.gesture = null;
 			navigator.vibrate?.(12);
-			this.openContextMenu(e.clientX, e.clientY, p, note);
+			this.openContextMenu(e.clientX, e.clientY, p, note, true);
 		}, LONG_PRESS_MS);
 	}
 
-	private openContextMenu(cx: number, cy: number, p: { x: number; y: number }, note: Note | null) {
+	private openContextMenu(
+		cx: number,
+		cy: number,
+		p: { x: number; y: number },
+		note: Note | null,
+		guard = false
+	) {
 		if (note) {
 			if (!project.selection.has(note.id)) project.select([note.id]);
-			ui.openMenu({ x: cx, y: cy, items: noteMenu(note.id) });
+			ui.openMenu({ x: cx, y: cy, items: noteMenu(note.id), guard });
 		} else {
 			const tick = Math.max(0, this.snap(this.tickAtX(p.x), false, 'floor'));
 			const pitch = clamp(Math.floor(this.pitchAtY(p.y)), MIN_PITCH, MAX_PITCH);
-			ui.openMenu({ x: cx, y: cy, items: emptyMenu(tick, pitch) });
+			ui.openMenu({ x: cx, y: cy, items: emptyMenu(tick, pitch), guard });
 		}
 	}
 

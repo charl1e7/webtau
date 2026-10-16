@@ -22,6 +22,8 @@ export interface SettingsData {
 	rightWidth: number;
 	leftOpen: boolean;
 	rightOpen: boolean;
+	/** Bumped when a default changes so that stored settings can be migrated. */
+	settingsVersion: number;
 }
 
 const DEFAULTS: SettingsData = {
@@ -31,7 +33,7 @@ const DEFAULTS: SettingsData = {
 	playbackStart: 'cursor',
 	followPlayhead: true,
 	analysisWorkers: 0,
-	analysisQuality: 'accurate',
+	analysisQuality: 'fast',
 	backgroundAnalysis: true,
 	showNoteNames: true,
 	touchMode: 'auto',
@@ -39,7 +41,8 @@ const DEFAULTS: SettingsData = {
 	leftWidth: 308,
 	rightWidth: 296,
 	leftOpen: true,
-	rightOpen: true
+	rightOpen: true,
+	settingsVersion: 2
 };
 
 const STORAGE_KEY = 'webtau:settings';
@@ -48,7 +51,12 @@ function load(): SettingsData {
 	if (!browser) return { ...DEFAULTS };
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		return { ...DEFAULTS, ...(raw ? JSON.parse(raw) : {}) };
+		const stored = raw ? JSON.parse(raw) : {};
+		const data: SettingsData = { ...DEFAULTS, ...stored };
+		// v2: the fast DIO analyzer became the default; apply it to older stored settings once.
+		if ((stored.settingsVersion ?? 1) < 2) data.analysisQuality = 'fast';
+		data.settingsVersion = DEFAULTS.settingsVersion;
+		return data;
 	} catch {
 		return { ...DEFAULTS };
 	}

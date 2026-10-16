@@ -138,8 +138,8 @@
 		<div class="field">
 			<label for="s-quality">Quality</label>
 			<select id="s-quality" bind:value={settings.data.analysisQuality}>
-				<option value="accurate">Accurate (Harvest) — best pitch tracking</option>
-				<option value="fast">Fast (DIO) — about 2× faster, slightly rougher</option>
+				<option value="accurate">Accurate (Harvest) — best pitch tracking, slower</option>
+				<option value="fast">Fast (DIO) — about 2× faster (default)</option>
 			</select>
 			<span class="hint">Changing this re-analyzes samples the next time they are needed.</span>
 		</div>
