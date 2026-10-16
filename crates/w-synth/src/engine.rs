@@ -1,0 +1,495 @@
+use crate::consts;
+use crate::oto::{OtoBank, PrefixMap, parse_oto_ini, parse_prefix_map};
+use crate::resample::{self, RenderedNote};
+use crate::world::features::WorldFeatures;
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+
+#[derive(Deserialize, Debug)]
+pub struct PitchbendPointInfo {
+    pub offset: f64,
+    pub value: f64,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct NoteInfo {
+    pub alias: String,
+    pub pitch: i32,
+    pub start_time: f64,
+    pub duration: f64,
+    #[serde(default)]
+    pub pitchbend: Vec<PitchbendPointInfo>,
+    #[serde(default)]
+    pub flags: String,
+    #[serde(default = "default_velocity")]
+    pub velocity: f64,
+    #[serde(default = "default_velocity")]
+    pub volume: f64,
+    #[serde(default)]
+    pub modulation: f64,
+}
+
+fn default_velocity() -> f64 {
+    100.0
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ProjectInfo {
+    pub notes: Vec<NoteInfo>,
+    #[serde(default)]
+    pub tempo: f64,
+}
+
+/// Lowercased file name without directories: the key under which features
+/// are stored and looked up.
+pub fn normalize_filename(name: &str) -> String {
+    name.rsplit(['/', '\\']).next().unwrap_or(name).to_lowercase()
+}
+
+struct StoredFeatures {
+    features: Rc<WorldFeatures>,
+    /// Changes whenever the features of a file are replaced, which
+    /// invalidates every rendered note that depended on them.
+    epoch: u32,
+}
+
+#[derive(Serialize, Default, Clone)]
+pub struct RenderReport {
+    pub total: usize,
+    pub rendered: usize,
+    pub cached: usize,
+    pub skipped_rests: usize,
+    /// Indices (into the notes array sent by the host) of notes whose alias
+    /// could not be found in the voicebank.
+    pub missing_alias: Vec<usize>,
+    /// Indices of notes whose sample has no analyzed features yet.
+    pub missing_features: Vec<usize>,
+    pub errors: Vec<String>,
+}
+
+struct PlannedNote {
+    /// Index in the original notes array.
+    source_index: usize,
+    oto_alias: String,
+    has_next_crossfade: bool,
+}
+
+struct Session {
+    project: ProjectInfo,
+    plan: Vec<PlannedNote>,
+    cursor: usize,
+    master: Vec<f32>,
+    new_cache: HashMap<u64, Rc<RenderedNote>>,
+    report: RenderReport,
+}
+
+pub struct Engine {
+    oto: OtoBank,
+    prefix_map: PrefixMap,
+    features: HashMap<String, StoredFeatures>,
+    next_epoch: u32,
+    render_cache: HashMap<u64, Rc<RenderedNote>>,
+    session: Option<Session>,
+    last_report: RenderReport,
+}
+
+impl Engine {
+    pub fn new() -> Self {
+        Self {
+            oto: OtoBank::default(),
+            prefix_map: PrefixMap::new(),
+            features: HashMap::new(),
+            next_epoch: 1,
+            render_cache: HashMap::new(),
+            session: None,
+            last_report: RenderReport::default(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    pub fn load_oto(&mut self, data: &[u8]) -> Result<()> {
+        self.oto = OtoBank::from_entries(parse_oto_ini(data)?);
+        self.render_cache.clear();
+        Ok(())
+    }
+
+    pub fn load_prefix_map(&mut self, data: &[u8]) {
+        self.prefix_map = parse_prefix_map(data);
+        self.render_cache.clear();
+    }
+
+    pub fn cache_features(&mut self, filename: &str, features: WorldFeatures) {
+        let epoch = self.next_epoch;
+        self.next_epoch += 1;
+        self.features.insert(
+            normalize_filename(filename),
+            StoredFeatures {
+                features: Rc::new(features),
+                epoch,
+            },
+        );
+    }
+
+    pub fn has_features(&self, filename: &str) -> bool {
+        self.features.contains_key(&normalize_filename(filename))
+    }
+
+    /// `[[alias, file], ...]` for every oto entry.
+    pub fn oto_entries(&self) -> Vec<(&str, &str)> {
+        self.oto
+            .iter()
+            .map(|e| (e.alias.as_str(), e.filename.as_str()))
+            .collect()
+    }
+
+    /// Alias that is actually used for a note after the prefix map is applied.
+    fn resolve_alias(&self, alias: &str, pitch: i32) -> String {
+        let best = self
+            .prefix_map
+            .keys()
+            .filter(|&&k| k <= pitch)
+            .max()
+            .and_then(|k| self.prefix_map.get(k));
+        if let Some((prefix, suffix)) = best {
+            let candidate = format!("{prefix}{alias}{suffix}");
+            if self.oto.find(&candidate).is_some() {
+                return candidate;
+            }
+        }
+        alias.to_string()
+    }
+
+    /// Sample files needed to render the given notes, plus the indices of
+    /// the notes that cannot be resolved to any oto entry.
+    pub fn required_files(&self, notes: &[NoteInfo]) -> (Vec<String>, Vec<usize>) {
+        let mut files = Vec::new();
+        let mut seen = HashSet::new();
+        let mut missing = Vec::new();
+        for (i, note) in notes.iter().enumerate() {
+            if is_rest(note) {
+                continue;
+            }
+            match self.oto.find(&self.resolve_alias(&note.alias, note.pitch)) {
+                Some(entry) => {
+                    if seen.insert(entry.filename.clone()) {
+                        files.push(entry.filename.clone());
+                    }
+                }
+                None => missing.push(i),
+            }
+        }
+        (files, missing)
+    }
+
+    pub fn begin(&mut self, project: ProjectInfo) -> usize {
+        let mut order: Vec<usize> = (0..project.notes.len()).collect();
+        order.sort_by(|&a, &b| {
+            project.notes[a]
+                .start_time
+                .partial_cmp(&project.notes[b].start_time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mut report = RenderReport {
+            total: project.notes.len(),
+            ..Default::default()
+        };
+
+        let mut plan = Vec::with_capacity(order.len());
+        for (pos, &idx) in order.iter().enumerate() {
+            let note = &project.notes[idx];
+            if is_rest(note) {
+                report.skipped_rests += 1;
+                continue;
+            }
+            let oto_alias = self.resolve_alias(&note.alias, note.pitch);
+            if self.oto.find(&oto_alias).is_none() {
+                report.missing_alias.push(idx);
+                continue;
+            }
+            // A note is cross-faded into its successor only if they touch.
+            let has_next_crossfade = order.get(pos + 1).is_some_and(|&n| {
+                (note.start_time + note.duration - project.notes[n].start_time).abs() < 0.5
+            });
+            plan.push(PlannedNote {
+                source_index: idx,
+                oto_alias,
+                has_next_crossfade,
+            });
+        }
+
+        let end_ms = project
+            .notes
+            .iter()
+            .map(|n| n.start_time + n.duration)
+            .fold(0.0, f64::max)
+            + 2000.0;
+        let total_samples = (end_ms / 1000.0 * consts::SAMPLE_RATE as f64).ceil() as usize;
+
+        let count = plan.len();
+        self.session = Some(Session {
+            project,
+            plan,
+            cursor: 0,
+            master: vec![0.0; total_samples],
+            new_cache: HashMap::new(),
+            report,
+        });
+        count
+    }
+
+    /// Renders up to `max_notes` more notes. Returns how many remain.
+    pub fn step(&mut self, max_notes: usize) -> Result<usize> {
+        let mut session = self
+            .session
+            .take()
+            .ok_or_else(|| anyhow!("no synthesis session"))?;
+        let end = (session.cursor + max_notes.max(1)).min(session.plan.len());
+
+        while session.cursor < end {
+            let planned = &session.plan[session.cursor];
+            session.cursor += 1;
+            let note = &session.project.notes[planned.source_index];
+            let Some(oto) = self.oto.find(&planned.oto_alias) else {
+                continue;
+            };
+            let Some(stored) = self.features.get(&normalize_filename(&oto.filename)) else {
+                session.report.missing_features.push(planned.source_index);
+                continue;
+            };
+
+            let key = cache_key(note, &planned.oto_alias, planned.has_next_crossfade, stored.epoch);
+            let rendered = if let Some(hit) = self.render_cache.get(&key) {
+                session.report.cached += 1;
+                hit.clone()
+            } else {
+                match resample::render_note(note, oto, &stored.features, planned.has_next_crossfade)
+                {
+                    Ok(r) => {
+                        session.report.rendered += 1;
+                        Rc::new(r)
+                    }
+                    Err(e) => {
+                        session
+                            .report
+                            .errors
+                            .push(format!("note {}: {e}", planned.source_index));
+                        continue;
+                    }
+                }
+            };
+
+            let start_ms = note.start_time - rendered.lead_ms;
+            let start_sample = (start_ms / 1000.0 * consts::SAMPLE_RATE as f64).round() as i64;
+            for (j, s) in rendered.pcm.iter().enumerate() {
+                let idx = start_sample + j as i64;
+                if idx >= 0 {
+                    if let Some(m) = session.master.get_mut(idx as usize) {
+                        *m += *s;
+                    }
+                }
+            }
+            session.new_cache.insert(key, rendered);
+        }
+
+        let remaining = session.plan.len() - session.cursor;
+        self.session = Some(session);
+        Ok(remaining)
+    }
+
+    /// Normalizes the mix and returns it. Notes that were not rendered in this
+    /// session are evicted from the render cache.
+    pub fn finish(&mut self) -> Result<Vec<f32>> {
+        let mut session = self
+            .session
+            .take()
+            .ok_or_else(|| anyhow!("no synthesis session"))?;
+
+        self.render_cache = std::mem::take(&mut session.new_cache);
+        self.last_report = session.report;
+
+        let peak = session.master.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        if peak > 0.001 && !(0.8..=1.0).contains(&peak) {
+            let gain = 0.95 / peak;
+            session.master.iter_mut().for_each(|s| *s *= gain);
+        }
+        Ok(session.master)
+    }
+
+    pub fn report(&self) -> &RenderReport {
+        &self.last_report
+    }
+}
+
+fn is_rest(note: &NoteInfo) -> bool {
+    let alias = note.alias.trim();
+    alias.is_empty() || alias.eq_ignore_ascii_case("r")
+}
+
+fn cache_key(note: &NoteInfo, oto_alias: &str, has_next: bool, epoch: u32) -> u64 {
+    let mut h = DefaultHasher::new();
+    oto_alias.hash(&mut h);
+    epoch.hash(&mut h);
+    note.pitch.hash(&mut h);
+    note.duration.to_bits().hash(&mut h);
+    note.flags.hash(&mut h);
+    note.velocity.to_bits().hash(&mut h);
+    note.volume.to_bits().hash(&mut h);
+    has_next.hash(&mut h);
+    for p in &note.pitchbend {
+        p.offset.to_bits().hash(&mut h);
+        p.value.to_bits().hash(&mut h);
+    }
+    h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::read_write::read_audio;
+    use crate::world::features::{AnalysisMode, generate_features};
+    use std::time::Instant;
+
+    /// 16-bit mono PCM WAV of a vowel-like harmonic tone with a noisy attack.
+    fn make_wav(seconds: f64) -> Vec<u8> {
+        let sr = consts::SAMPLE_RATE;
+        let n = (seconds * sr as f64) as usize;
+        let mut pcm = Vec::with_capacity(n * 2);
+        let mut seed = 12345u32;
+        for i in 0..n {
+            let t = i as f64 / sr as f64;
+            let f0 = 220.0 + 10.0 * (t * 5.0).sin();
+            let mut v = 0.0;
+            for h in 1..=8 {
+                v += (2.0 * std::f64::consts::PI * f0 * h as f64 * t).sin() / h as f64;
+            }
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            let noise = (seed >> 16) as f64 / 32768.0 - 1.0;
+            let env = if t < 0.05 { 0.0 } else { 1.0 };
+            let sample = 0.25 * v * env + if t < 0.05 { 0.1 * noise } else { 0.0 };
+            pcm.extend_from_slice(&((sample * 20000.0) as i16).to_le_bytes());
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&sr.to_le_bytes());
+        out.extend_from_slice(&(sr * 2).to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+        out.extend_from_slice(&pcm);
+        out
+    }
+
+    fn note(alias: &str, start: f64, duration: f64, pitch: i32) -> NoteInfo {
+        NoteInfo {
+            alias: alias.into(),
+            pitch,
+            start_time: start,
+            duration,
+            pitchbend: vec![],
+            flags: String::new(),
+            velocity: 100.0,
+            volume: 100.0,
+            modulation: 0.0,
+        }
+    }
+
+    #[test]
+    fn analysis_modes_agree_and_fast_is_faster() {
+        let audio = read_audio(&make_wav(1.5)).unwrap();
+        let t = Instant::now();
+        let accurate = generate_features(&audio, AnalysisMode::Accurate, None).unwrap();
+        let t_accurate = t.elapsed();
+        let t = Instant::now();
+        let fast = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        let t_fast = t.elapsed();
+        eprintln!("accurate {t_accurate:?} fast {t_fast:?}");
+
+        assert_eq!(accurate.frames(), fast.frames());
+        assert_eq!(accurate.mgc.len(), accurate.frames() * 64);
+        assert!((accurate.base_f0 - 220.0).abs() < 15.0, "{}", accurate.base_f0);
+        assert!((fast.base_f0 - 220.0).abs() < 15.0, "{}", fast.base_f0);
+    }
+
+    #[test]
+    fn features_roundtrip_through_serialization() {
+        let audio = read_audio(&make_wav(0.5)).unwrap();
+        let f = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        let bytes = oxicode::encode_to_vec(&f).unwrap();
+        let (back, _): (WorldFeatures, usize) = oxicode::decode_from_slice(&bytes).unwrap();
+        assert_eq!(back.mgc, f.mgc);
+        assert_eq!(back.f0, f.f0);
+    }
+
+    #[test]
+    fn synthesize_uses_and_evicts_render_cache() {
+        let mut engine = Engine::new();
+        engine
+            .load_oto(b"a.wav=a,0,150,-100,40,20\nb.wav=b,0,150,-100,40,20\n")
+            .unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        let features = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        engine.cache_features("a.wav", features.clone());
+        engine.cache_features("B.WAV", features);
+
+        let project = |dur: f64| ProjectInfo {
+            tempo: 120.0,
+            notes: vec![
+                note("a", 0.0, 400.0, 60),
+                note("b", 400.0, dur, 64),
+                note("zzz", 800.0, 200.0, 60),
+                note("R", 1000.0, 200.0, 60),
+            ],
+        };
+
+        let n = engine.begin(project(400.0));
+        assert_eq!(n, 2);
+        while engine.step(1).unwrap() > 0 {}
+        let pcm = engine.finish().unwrap();
+        assert!(pcm.iter().any(|s| s.abs() > 0.1), "silent output");
+        let r = engine.report().clone();
+        assert_eq!((r.rendered, r.cached), (2, 0));
+        assert_eq!(r.missing_alias, vec![2]);
+
+        // Same project again: everything comes from the cache.
+        engine.begin(project(400.0));
+        while engine.step(8).unwrap() > 0 {}
+        engine.finish().unwrap();
+        let r = engine.report().clone();
+        assert_eq!((r.rendered, r.cached), (0, 2));
+
+        // Editing the second note only re-renders the second note.
+        engine.begin(project(300.0));
+        while engine.step(8).unwrap() > 0 {}
+        engine.finish().unwrap();
+        let r = engine.report().clone();
+        assert_eq!((r.rendered, r.cached), (1, 1));
+    }
+
+    #[test]
+    fn required_files_resolves_prefix_map() {
+        let mut engine = Engine::new();
+        engine.load_oto(b"a_hi.wav=a_hi,0,0,0,0,0\na.wav=a,0,0,0,0,0\n").unwrap();
+        engine.load_prefix_map(b"C5=\t_hi\n");
+        let (files, missing) = engine.required_files(&[
+            note("a", 0.0, 1.0, 60),
+            note("a", 0.0, 1.0, 72),
+            note("q", 0.0, 1.0, 72),
+        ]);
+        assert_eq!(files, vec!["a.wav", "a_hi.wav"]);
+        assert_eq!(missing, vec![2]);
+    }
+}

@@ -1,6 +1,5 @@
 use crate::consts;
 use anyhow::{Context, Result};
-use hound::{SampleFormat, WavSpec, WavWriter};
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{
     Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
@@ -83,7 +82,7 @@ pub fn read_audio(audio_data: &[u8]) -> Result<Vec<f64>> {
         .context("unsupported codec")?;
 
     let mut audio: Vec<f64> = Vec::new();
-    let mut channels = 1usize;
+    let mut channels;
     let mut fs = 1u32;
     let mut interleaved: Vec<f32> = Vec::new();
 
@@ -137,28 +136,4 @@ pub fn read_audio(audio_data: &[u8]) -> Result<Vec<f64>> {
     } else {
         resample_audio(audio, fs, consts::SAMPLE_RATE)
     }
-}
-
-pub fn write_audio(audio: &[f64]) -> Result<Vec<u8>> {
-    let out_spec = WavSpec {
-        channels: 1,
-        sample_rate: consts::SAMPLE_RATE,
-        bits_per_sample: 16,
-        sample_format: SampleFormat::Int,
-    };
-
-    let expected_bytes = 44 + audio.len() * 2;
-    let mut cursor = Cursor::new(Vec::with_capacity(expected_bytes));
-    let mut writer = WavWriter::new(&mut cursor, out_spec)?;
-
-    let mut error = 0.0;
-    for &sample in audio {
-        let scaled = (sample * i16::MAX as f64).clamp(i16::MIN as f64, i16::MAX as f64) + error;
-        let quantized = scaled.round().clamp(i16::MIN as f64, i16::MAX as f64) as i16;
-        error = scaled - quantized as f64;
-        writer.write_sample(quantized)?;
-    }
-
-    writer.finalize()?;
-    Ok(cursor.into_inner())
 }

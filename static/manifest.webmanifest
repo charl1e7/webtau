@@ -1,0 +1,12 @@
+{
+	"name": "WebTAU",
+	"short_name": "WebTAU",
+	"description": "A browser-based vocal synthesizer for UTAU voicebanks.",
+	"start_url": ".",
+	"scope": ".",
+	"display": "standalone",
+	"orientation": "any",
+	"background_color": "#0e0f13",
+	"theme_color": "#16181d",
+	"icons": [{ "src": "favicon.png", "sizes": "any", "type": "image/png", "purpose": "any" }]
+}
