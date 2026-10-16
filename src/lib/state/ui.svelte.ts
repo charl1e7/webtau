@@ -34,8 +34,18 @@ class UiState {
 	coarsePointer = $state(false);
 	panel = $state<Panel>(null);
 	/** Docked side panels on wide screens. */
-	leftOpen = $state(true);
-	rightOpen = $state(true);
+	get leftOpen() {
+		return settings.data.leftOpen;
+	}
+	set leftOpen(v: boolean) {
+		settings.data.leftOpen = v;
+	}
+	get rightOpen() {
+		return settings.data.rightOpen;
+	}
+	set rightOpen(v: boolean) {
+		settings.data.rightOpen = v;
+	}
 	dialog = $state<DialogName>(null);
 	menu = $state<MenuRequest | null>(null);
 	toasts = $state<Toast[]>([]);

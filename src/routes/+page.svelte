@@ -6,6 +6,7 @@
 	import PianoRoll from '#lib/components/roll/PianoRoll.svelte';
 	import { rollHandle } from '#lib/components/roll/controller.svelte';
 	import Sheet from '#lib/components/Sheet.svelte';
+	import Splitter from '#lib/components/Splitter.svelte';
 	import StatusBar from '#lib/components/StatusBar.svelte';
 	import Toasts from '#lib/components/Toasts.svelte';
 	import ToolBar from '#lib/components/ToolBar.svelte';
@@ -197,8 +198,17 @@
 	<TopBar />
 
 	<div class="body">
-		{#if !ui.compact && ui.leftOpen}
-			<aside class="side card left" aria-label="Voicebank"><VoicebankPanel /></aside>
+		{#if !ui.compact}
+			{#if ui.leftOpen}
+				<aside
+					class="side card left"
+					style:width="{settings.data.leftWidth}px"
+					aria-label="Voicebank"
+				>
+					<VoicebankPanel />
+				</aside>
+			{/if}
+			<Splitter side="left" />
 		{/if}
 
 		<main class="center card">
@@ -211,8 +221,17 @@
 			{/if}
 		</main>
 
-		{#if !ui.compact && ui.rightOpen}
-			<aside class="side card right" aria-label="Properties"><Inspector /></aside>
+		{#if !ui.compact}
+			<Splitter side="right" />
+			{#if ui.rightOpen}
+				<aside
+					class="side card right"
+					style:width="{settings.data.rightWidth}px"
+					aria-label="Properties"
+				>
+					<Inspector />
+				</aside>
+			{/if}
 		{/if}
 	</div>
 
@@ -251,7 +270,6 @@
 		flex: 1;
 		min-height: 0;
 		display: flex;
-		gap: 12px;
 	}
 	.compact .body {
 		gap: 6px;
@@ -264,12 +282,8 @@
 	}
 	.side {
 		flex: none;
-		width: 308px;
 		overflow-y: auto;
 		overscroll-behavior: contain;
-	}
-	.side.right {
-		width: 296px;
 	}
 	.drop {
 		position: fixed;
@@ -290,13 +304,5 @@
 		background: var(--panel);
 		text-align: center;
 		max-width: 80vw;
-	}
-	@media (max-width: 1100px) and (min-width: 821px) {
-		.side {
-			width: 260px;
-		}
-		.side.right {
-			width: 250px;
-		}
 	}
 </style>

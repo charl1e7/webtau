@@ -17,6 +17,11 @@ export interface SettingsData {
 	/** UI scale for touch targets: 'auto' picks by input device. */
 	touchMode: 'auto' | 'on' | 'off';
 	theme: 'auto' | 'dark' | 'light';
+	/** Docked side panels of the desktop layout. */
+	leftWidth: number;
+	rightWidth: number;
+	leftOpen: boolean;
+	rightOpen: boolean;
 }
 
 const DEFAULTS: SettingsData = {
@@ -30,7 +35,11 @@ const DEFAULTS: SettingsData = {
 	backgroundAnalysis: true,
 	showNoteNames: true,
 	touchMode: 'auto',
-	theme: 'dark'
+	theme: 'dark',
+	leftWidth: 308,
+	rightWidth: 296,
+	leftOpen: true,
+	rightOpen: true
 };
 
 const STORAGE_KEY = 'webtau:settings';

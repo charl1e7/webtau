@@ -4,9 +4,8 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-  # Preview builds of the work-in-progress branch.
   push:
-    branches: [ccr-45969756-vq9yqm]
+    branches: [main]
 
 permissions:
   contents: read
