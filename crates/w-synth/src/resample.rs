@@ -154,7 +154,16 @@ pub fn render_note(
     let mgc_render = interpolate_rows(&features.mgc, frames, features.mgc_dims(), &t_render);
     let bap_render = interpolate_rows(&features.bap, frames, features.bap_dims(), &t_render);
 
-    let f0_render = build_f0(note, &flags, render_length, note_dur_ms);
+    let (mut f0_render, pitch_dev) = build_f0(note, &flags, render_length, note_dur_ms);
+    let mut frame_gain = vec![1.0f64; render_length];
+    apply_amplitude_flag(&mut frame_gain, &pitch_dev, flags.tremolo);
+    apply_fry(
+        &mut f0_render,
+        &mut frame_gain,
+        &flags,
+        render_preutterance_ms,
+        note_dur_ms,
+    );
 
     let mut sp_render = rsworld::decode_spectral_envelope(
         &mgc_render,
@@ -163,6 +172,7 @@ pub fn render_note(
         consts::FFT_SIZE,
     );
     drop(mgc_render);
+    warp_formants(&mut sp_render, flags.gender);
     let ap_render = rsworld::decode_aperiodicity(
         &bap_render,
         render_length as i32,
@@ -180,6 +190,7 @@ pub fn render_note(
         .map(|(hm, wh)| ((hm * harmonic_mix + wh) * volume) as f32)
         .collect();
 
+    apply_frame_gain(&mut syn, &frame_gain);
     apply_crossfade_envelopes(&mut syn, render_preutterance_ms, current_fade_out_ms);
 
     Ok(RenderedNote {
@@ -189,7 +200,13 @@ pub fn render_note(
 }
 
 /// Frame-wise F0 contour (Hz) of a note including its pitch bend points.
-fn build_f0(note: &NoteInfo, flags: &Flags, render_length: usize, note_dur_ms: f64) -> Vec<f64> {
+/// Returns the F0 contour (Hz) and the pitch-bend deviation (semitones) per frame.
+fn build_f0(
+    note: &NoteInfo,
+    flags: &Flags,
+    render_length: usize,
+    note_dur_ms: f64,
+) -> (Vec<f64>, Vec<f64>) {
     let mut pitch_points: Vec<(f64, f64)> = note
         .pitchbend
         .iter()
@@ -224,9 +241,139 @@ fn build_f0(note: &NoteInfo, flags: &Flags, render_length: usize, note_dur_ms: f
 
     let spline = Akima::new(&uniform);
     let base = note.pitch as f64 + flags.pitch_offset / 100.0;
-    (0..render_length)
-        .map(|i| util::midi_to_hz(spline.sample(i as f64) + base))
-        .collect()
+    let dev: Vec<f64> = (0..render_length).map(|i| spline.sample(i as f64)).collect();
+    let hz = dev.iter().map(|d| util::midi_to_hz(d + base)).collect();
+    (hz, dev)
+}
+
+/// `g` flag: shifts the formants by resampling every spectral envelope along
+/// the frequency axis. Positive values move formants up (a brighter, younger
+/// voice), negative values down (a deeper voice).
+pub fn warp_formants(sp: &mut [Vec<f64>], gender: f64) {
+    let g = gender.clamp(-100.0, 100.0);
+    if g == 0.0 {
+        return;
+    }
+    let shift = (g / 120.0).exp2();
+    for frame in sp.iter_mut() {
+        let n = frame.len();
+        let src = frame.clone();
+        for (k, out) in frame.iter_mut().enumerate() {
+            let pos = (k as f64 / shift).min((n - 1) as f64);
+            let lo = pos.floor() as usize;
+            let hi = (lo + 1).min(n - 1);
+            *out = util::lerp(src[lo], src[hi], pos - lo as f64);
+        }
+    }
+}
+
+/// `A` flag: the louder the pitch is bent upwards, the louder the voice
+/// (and quieter when bent down), which emphasizes pitch movements.
+pub fn apply_amplitude_flag(gain: &mut [f64], pitch_dev: &[f64], amount: f64) {
+    if amount == 0.0 {
+        return;
+    }
+    let a = amount.clamp(-100.0, 100.0) / 100.0;
+    for (g, d) in gain.iter_mut().zip(pitch_dev) {
+        *g *= (a * d / 2.0).exp2().clamp(0.1, 4.0);
+    }
+}
+
+/// `fe` / `fl` / `fv` / `fp` flags: vocal fry. During the last `fe`
+/// milliseconds of the note the pitch glides (over `fl` ms) to the fry pitch
+/// `fp` Hz with an irregular wobble and the level drops by `fv` dB.
+pub fn apply_fry(
+    f0: &mut [f64],
+    gain: &mut [f64],
+    flags: &Flags,
+    lead_ms: f64,
+    note_dur_ms: f64,
+) {
+    if flags.fry_enable <= 0.0 {
+        return;
+    }
+    let start = (note_dur_ms - flags.fry_enable).max(0.0);
+    let ramp = flags.fry_transition.max(1.0);
+    let fry_pitch = flags.fry_pitch.max(20.0);
+    let drop = 10f64.powf(-flags.fry_volume / 20.0);
+    for (i, (f, g)) in f0.iter_mut().zip(gain.iter_mut()).enumerate() {
+        let t = i as f64 * consts::FRAME_PERIOD - lead_ms;
+        let w = ((t - start) / ramp).clamp(0.0, 1.0);
+        if w <= 0.0 {
+            continue;
+        }
+        let w = w * w * (3.0 - 2.0 * w);
+        // Deterministic jitter, different for every frame.
+        let h = ((i as u32).wrapping_mul(2654435761) >> 16) as f64 / 65535.0;
+        let wobble = 1.0 + 0.12 * (h - 0.5);
+        *f = util::lerp(*f, fry_pitch * wobble, w);
+        *g *= util::lerp(1.0, drop, w);
+    }
+}
+
+/// Applies a per-frame gain curve (linearly interpolated) to PCM.
+fn apply_frame_gain(pcm: &mut [f32], gain: &[f64]) {
+    if gain.iter().all(|g| (*g - 1.0).abs() < 1e-9) {
+        return;
+    }
+    let spf = consts::SAMPLE_RATE as f64 * consts::FRAME_PERIOD / 1000.0;
+    for (i, s) in pcm.iter_mut().enumerate() {
+        let pos = i as f64 / spf;
+        let lo = (pos.floor() as usize).min(gain.len() - 1);
+        let hi = (lo + 1).min(gain.len() - 1);
+        *s *= util::lerp(gain[lo], gain[hi], pos - lo as f64) as f32;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peak(frame: &[f64]) -> usize {
+        frame
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn gender_moves_spectral_peak() {
+        let mut base = vec![0.01; 1025];
+        base[100] = 1.0;
+        let mut up = vec![base.clone()];
+        warp_formants(&mut up, 100.0);
+        let mut down = vec![base.clone()];
+        warp_formants(&mut down, -100.0);
+        assert!(peak(&up[0]) > 150, "up: {}", peak(&up[0]));
+        assert!(peak(&down[0]) < 70, "down: {}", peak(&down[0]));
+        let mut same = vec![base.clone()];
+        warp_formants(&mut same, 0.0);
+        assert_eq!(same[0], base);
+    }
+
+    #[test]
+    fn fry_lowers_pitch_and_level_at_the_end() {
+        let flags: Flags = "fe300fl50fv20fp80".parse().unwrap();
+        let n = 100;
+        let mut f0 = vec![440.0; n];
+        let mut gain = vec![1.0; n];
+        // note lasts 400 ms, no lead-in
+        apply_fry(&mut f0, &mut gain, &flags, 0.0, 400.0);
+        assert_eq!(f0[5], 440.0); // before the fry region
+        assert!(f0[79] < 120.0, "{}", f0[79]);
+        assert!(gain[79] < 0.2, "{}", gain[79]);
+        assert_eq!(gain[5], 1.0);
+    }
+
+    #[test]
+    fn amplitude_flag_follows_pitch_bend() {
+        let mut gain = vec![1.0; 3];
+        apply_amplitude_flag(&mut gain, &[0.0, 2.0, -2.0], 100.0);
+        assert_eq!(gain[0], 1.0);
+        assert!(gain[1] > 1.5 && gain[2] < 0.7);
+    }
 }
 
 fn apply_crossfade_envelopes(pcm: &mut [f32], fade_in_len_ms: f64, fade_out_len_ms: f64) {

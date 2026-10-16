@@ -28,7 +28,7 @@
 		// Handy for debugging and automated tests: open the app with ?debug.
 		if (new URLSearchParams(location.search).has('debug')) {
 			Object.assign(window, {
-				webtau: { project, playback, voicebank, ui, view, settings, roll: rollHandle }
+				webtau: { project, playback, voicebank, ui, view, settings, file, edit, roll: rollHandle }
 			});
 		}
 		if (!new URLSearchParams(location.search).has('fresh') && project.restoreAutosave())
@@ -177,7 +177,7 @@
 		const entry = item.webkitGetAsEntry();
 		const dropped = e.dataTransfer?.files[0];
 		const name = (dropped?.name ?? entry?.name ?? '').toLowerCase();
-		if (/\.(ust|mid|midi|json|webtau)$/.test(name) && dropped) void file.openDropped(dropped);
+		if (/\.(ust|vsqx|mid|midi|json|webtau)$/.test(name) && dropped) void file.openDropped(dropped);
 		else if (entry) void voicebank.load(entry);
 	}
 

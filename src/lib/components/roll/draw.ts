@@ -1,6 +1,6 @@
 import { MAX_PITCH, MIN_PITCH, type Note, type TempoChange } from '#lib/core/types';
 import { compilePitch } from '#lib/core/pitch';
-import { isBlackKey, noteName } from '#lib/core/music';
+import { isBlackKey, noteName, shade } from '#lib/core/music';
 import type { TempoMap } from '#lib/core/tempo';
 import type { Tool } from '#lib/state/view.svelte';
 
@@ -88,13 +88,25 @@ export interface Frame {
 	showNames: boolean;
 	unknown: ReadonlySet<string>;
 	hoverId: string | null;
+	/** Colour and audibility per track id. */
+	trackStyles: ReadonlyMap<string, { color: string; muted: boolean }>;
+	activeTrack: string;
 	tool: Tool;
 	touch: boolean;
 	selectedPoint: { noteId: string; pointId: string } | null;
 	rubber: Rect | null;
 	guideTick: number | null;
+	pressedKey: number | null;
 	editingLyricId: string | null;
 	theme: Theme;
+}
+
+const shadeCache = new Map<string, string>();
+function tint(color: string, amount: number): string {
+	const key = `${color}|${amount}`;
+	let v = shadeCache.get(key);
+	if (!v) shadeCache.set(key, (v = shade(color, amount)));
+	return v;
 }
 
 const pitchCache = new WeakMap<Note, { map: TempoMap; points: { x: number; y: number }[] }>();
@@ -221,12 +233,19 @@ function drawNotes(ctx: CanvasRenderingContext2D, f: Frame) {
 		if (b.y > f.h || b.y + b.h < f.rulerH) continue;
 		const selected = f.selection.has(n.id);
 		const isRest = n.lyric.toLowerCase() === 'r';
+		const style = f.trackStyles.get(n.track);
+		const base = style?.color ?? t.note;
+		const dimmed = style?.muted
+			? 0.3
+			: n.track !== f.activeTrack && f.trackStyles.size > 1
+				? 0.72
+				: 1;
 
-		ctx.globalAlpha = isRest ? 0.45 : 1;
+		ctx.globalAlpha = (isRest ? 0.45 : 1) * dimmed;
 		const radius = Math.min(6, b.h / 3);
 		const grad = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
-		grad.addColorStop(0, selected ? t.noteSelected : t.noteHi);
-		grad.addColorStop(1, selected ? t.noteHi : t.note);
+		grad.addColorStop(0, selected ? tint(base, 0.62) : tint(base, 0.38));
+		grad.addColorStop(1, selected ? tint(base, 0.4) : base);
 		ctx.save();
 		if (selected) {
 			ctx.shadowColor = t.accent;
@@ -255,8 +274,8 @@ function drawNotes(ctx: CanvasRenderingContext2D, f: Frame) {
 			ctx.lineWidth = 2;
 			ctx.setLineDash([4, 3]);
 		} else {
-			ctx.strokeStyle = selected ? '#ffffff' : t.noteEdge;
-			ctx.globalAlpha = selected ? 0.9 : 0.55;
+			ctx.strokeStyle = selected ? '#ffffff' : tint(base, 0.5);
+			ctx.globalAlpha = (selected ? 0.9 : 0.55) * dimmed;
 			ctx.lineWidth = selected ? 1.5 : 1;
 			ctx.setLineDash([]);
 		}
@@ -449,6 +468,14 @@ function drawKeys(ctx: CanvasRenderingContext2D, f: Frame) {
 		ctx.fillRect(0, y, f.keysW, f.keyH);
 		ctx.fillStyle = 'rgba(0,0,0,0.18)';
 		ctx.fillRect(0, y + f.keyH - 1, f.keysW, 1);
+
+		const pressed = f.pressedKey === p;
+		if (pressed) {
+			ctx.fillStyle = t.accent;
+			ctx.globalAlpha = 0.55;
+			ctx.fillRect(0, y, f.keysW, f.keyH - 1);
+			ctx.globalAlpha = 1;
+		}
 
 		if (isBlackKey(p)) {
 			const g = ctx.createLinearGradient(0, y, blackW, y);

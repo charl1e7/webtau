@@ -30,7 +30,7 @@
 	});
 
 	function pick(item: MenuItem) {
-		if (item.disabled || performance.now() - openedAt < 400) return;
+		if (item.disabled || (menu?.guard && performance.now() - openedAt < 400)) return;
 		if (item.children) {
 			stack = [...stack, { title: item.label ?? '', items: item.children }];
 			return;
@@ -84,7 +84,10 @@
 					onclick={() => pick(item)}
 				>
 					<span class="icon"
-						>{#if item.icon}<Icon name={item.icon as IconName} size={17} />{/if}</span
+						>{#if item.checked}<Icon name="check" size={17} />{:else if item.icon}<Icon
+								name={item.icon as IconName}
+								size={17}
+							/>{/if}</span
 					>
 					<span class="label">{item.label}</span>
 					{#if item.hint && !ui.compact}<span class="hint">{item.hint}</span>{/if}

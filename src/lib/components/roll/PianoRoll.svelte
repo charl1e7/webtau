@@ -7,6 +7,7 @@
 	import { view } from '#lib/state/view.svelte';
 	import { gridTicks } from '#lib/core/music';
 	import { PPQ } from '#lib/core/types';
+	import { isAudible } from '#lib/core/engine-notes';
 	import { RollController, RULER_H, rollHandle } from './controller.svelte';
 	import { drawFrame, readTheme, type Frame, type Theme } from './draw';
 	import LyricEditor from './LyricEditor.svelte';
@@ -106,11 +107,16 @@
 			showNames: settings.data.showNoteNames,
 			unknown: playback.unknownLyrics,
 			hoverId: c.hoverId,
+			trackStyles: new Map(
+				project.tracks.map((t) => [t.id, { color: t.color, muted: !isAudible(t, project.tracks) }])
+			),
+			activeTrack: project.activeTrack,
 			tool: view.tool,
 			touch: ui.touch,
 			selectedPoint: c.selectedPoint,
 			rubber: c.rubber,
 			guideTick: c.guideTick,
+			pressedKey: c.pressedKey,
 			editingLyricId: c.editingLyricId,
 			theme
 		};

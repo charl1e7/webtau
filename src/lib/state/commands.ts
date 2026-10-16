@@ -18,6 +18,8 @@ import { downloadBlob, safeFilename } from '#lib/io/download';
 import { parseMidi, serializeMidi, type MidiFile } from '#lib/io/midi';
 import { parseProject, serializeProject } from '#lib/io/project-file';
 import { parseUst, serializeUst } from '#lib/io/ust';
+import { parseVsqx } from '#lib/io/vsqx';
+import { createTrack } from '#lib/core/music';
 import { decodeText } from '#lib/io/text';
 import { MIN_NOTE_TICKS, type Note } from '#lib/core/types';
 import { playback } from './playback.svelte';
@@ -118,12 +120,20 @@ export const file = {
 
 	exportUst: guard(() => {
 		if (!project.notes.length) throw new Error('Nothing to export: add some notes first.');
-		const { text, warnings } = serializeUst(project.notes, project.tempos, {
+		const track = project.tracks.find((t) => t.id === project.activeTrack) ?? project.tracks[0];
+		const notes = project.notes.filter((n) => n.track === track.id);
+		if (!notes.length) throw new Error(`The track “${track.name}” has no notes to export.`);
+		const { text, warnings } = serializeUst(notes, project.tempos, {
 			name: project.name,
 			voicebank: project.voicebankName
 		});
 		downloadBlob(text, `${safeFilename(project.name)}.ust`, 'text/plain;charset=utf-8');
-		ui.toast('UST exported (UTF-8).', 'success');
+		ui.toast(
+			project.tracks.length > 1
+				? `UST exported (UTF-8): track “${track.name}” only, UST holds a single voice.`
+				: 'UST exported (UTF-8).',
+			'success'
+		);
 		warnings.forEach((w) => ui.toast(w));
 	}),
 
@@ -148,10 +158,53 @@ export const file = {
 		ui.toast(`Imported ${notes.length} notes from “${track.name}”.`, 'success');
 	},
 
+	/** Imports every track of a MIDI file as its own project track. */
+	applyMidiAll: (midi: MidiFile, fileName: string) => {
+		if (!confirmDiscard()) return;
+		const lyric = settings.data.defaultLyric || 'a';
+		const withNotes = midi.tracks.filter((t) => t.noteCount > 0);
+		const tracks = withNotes.map((t, i) => createTrack(i, { name: t.name }));
+		const notes = withNotes.flatMap((t, i) =>
+			t.notes.map((n) => ({ ...n, track: tracks[i].id, lyric: n.lyric === 'a' ? lyric : n.lyric }))
+		);
+		playback.stop();
+		project.load({ name: fileName.replace(/\.midi?$/i, ''), notes, tracks, tempos: midi.tempos });
+		ui.toast(`Imported ${withNotes.length} tracks, ${notes.length} notes.`, 'success');
+	},
+
+	importVsqx: guard(async () => {
+		const [f] = await pickFiles('.vsqx');
+		if (!f || !confirmDiscard()) return;
+		await file.applyVsqx(await f.text(), f.name);
+	}),
+
+	applyVsqx: async (xml: string, fileName: string) => {
+		const v = parseVsqx(xml);
+		if (!v.tracks.length) throw new Error('The VSQX file contains no notes.');
+		const tracks = v.tracks.map((t, i) => createTrack(i, { name: t.name }));
+		const notes = v.tracks.flatMap((t, i) => t.notes.map((n) => ({ ...n, track: tracks[i].id })));
+		playback.stop();
+		project.load({
+			name: fileName.replace(/\.vsqx$/i, ''),
+			notes,
+			tracks,
+			tempos: v.tempos,
+			timeSignature: v.timeSignature
+		});
+		ui.toast(`Imported ${notes.length} notes from VSQX (${tracks.length} track(s)).`, 'success');
+	},
+
 	exportMidi: guard(() => {
 		if (!project.notes.length) throw new Error('Nothing to export: add some notes first.');
 		downloadBlob(
-			serializeMidi(project.notes, project.tempos, project.name),
+			serializeMidi(
+				project.tracks.map((t) => ({
+					name: t.name,
+					notes: project.notes.filter((n) => n.track === t.id)
+				})),
+				project.tempos,
+				project.name
+			),
 			`${safeFilename(project.name)}.mid`,
 			'audio/midi'
 		);
@@ -178,6 +231,8 @@ export const file = {
 			const withNotes = midi.tracks.filter((t) => t.noteCount > 0);
 			if (withNotes.length === 1) file.applyMidi(midi, withNotes[0].index, f.name);
 			else if (withNotes.length) ui.openDialog('midi', { midi, fileName: f.name });
+		} else if (name.endsWith('.vsqx')) {
+			await file.applyVsqx(await f.text(), f.name);
 		} else if (name.endsWith('.json') || name.endsWith('.webtau')) {
 			if (!confirmDiscard()) return;
 			project.load(parseProject(decodeText(await readBytes(f))));
@@ -334,6 +389,7 @@ export const pitch = {
 
 export function newNoteAt(tick: number, pitchValue: number, length: number): Note {
 	return createNote({
+		track: project.activeTrack,
 		tick,
 		pitch: pitchValue,
 		length,

@@ -24,7 +24,7 @@
   `prefix.map` (prefix + suffix), `character.txt` and portrait are understood. Missing `oto.ini` is generated.
 - **Fast sample analysis** — samples are analyzed _lazily_ (only what your song uses), on a pool of
   workers, optionally in the background, and **cached in IndexedDB**: a voicebank is analyzed once per browser.
-  Choose _Accurate_ (Harvest) or _Fast_ (DIO) quality in Settings.
+  Choose _Fast_ (DIO, default) or _Accurate_ (Harvest) quality in Settings.
 - **Incremental rendering** — rendered notes are cached by the engine, so after an edit only the
   changed notes are re-synthesized.
 - **Piano roll for desktop and touch** — select / draw / pitch / erase tools, drag to move, grab either
@@ -34,7 +34,10 @@
   fade-in/out, per-note flags (`B`reathiness, `t` pitch offset), velocity, volume, modulation.
 - **Import / export** — UST (import & export, pitch curves, vibrato, tempo changes), MIDI (import with
   track picker & lyrics, export), project files (`.webtau.json`), WAV export.
-- **Tempo map** & time signatures, batch lyric filling (kana is split into morae).
+- **Tracks** — several tracks with mute / solo / volume / colour (all share the loaded voicebank), VSQX import,
+  tempo map with markers you can drag on the ruler, time signatures, batch lyric filling (kana → morae).
+- **Resampler flags** — `B` breathiness, `t` pitch offset, `g` gender (formant shift), `A` amplitude
+  following pitch, `fe`/`fl`/`fv`/`fp` vocal fry; click a piano key to hear a preview of the note.
 - **Installable & offline** — works as a PWA after the first visit; the UI adapts from phones to desktops.
 
 ## 🛠️ Development
@@ -92,10 +95,11 @@ On top of that, the voicebank no longer has to be analyzed up front, and results
 
 ## 🗺️ Roadmap
 
-- [ ] Tempo marker editing directly on the ruler
-- [ ] More resampler flags (gender, tremolo, fry)
-- [ ] Multiple tracks, VSQX import
-- [ ] Note preview when clicking the piano keys
+- [x] Tempo markers editable right on the ruler (click, drag, double-click to add)
+- [x] More resampler flags: gender `g`, amplitude `A`, vocal fry `fe`/`fl`/`fv`/`fp`
+- [x] Multiple tracks (mute / solo / volume / colour) and VSQX (VOCALOID 3/4) import
+- [x] Note preview when pressing the piano keys
+- [x] Basic UST / MIDI import, pitch bend improvements, caching
 
 ## Feedback
 

@@ -28,8 +28,23 @@ export interface Vibrato {
 	phase: number;
 }
 
+export interface Track {
+	id: string;
+	name: string;
+	/** CSS colour used for the notes of this track. */
+	color: string;
+	mute: boolean;
+	solo: boolean;
+	/** Mix level in percent. */
+	volume: number;
+}
+
+export const DEFAULT_TRACK_ID = 'track-1';
+
 export interface Note {
 	id: string;
+	/** Id of the track the note belongs to. */
+	track: string;
 	/** Start position in ticks. */
 	tick: number;
 	/** Duration in ticks. */
@@ -62,6 +77,7 @@ export interface TimeSignature {
 export interface ProjectData {
 	name: string;
 	notes: Note[];
+	tracks: Track[];
 	tempos: TempoChange[];
 	timeSignature: TimeSignature;
 	/** Name of the voicebank used when the project was saved (informational). */

@@ -31,6 +31,9 @@ pub struct NoteInfo {
     pub volume: f64,
     #[serde(default)]
     pub modulation: f64,
+    /// Notes only cross-fade with neighbours of their own track.
+    #[serde(default)]
+    pub track: u32,
 }
 
 fn default_velocity() -> f64 {
@@ -215,9 +218,12 @@ impl Engine {
                 continue;
             }
             // A note is cross-faded into its successor only if they touch.
-            let has_next_crossfade = order.get(pos + 1).is_some_and(|&n| {
-                (note.start_time + note.duration - project.notes[n].start_time).abs() < 0.5
-            });
+            let has_next_crossfade = order[pos + 1..]
+                .iter()
+                .find(|&&n| project.notes[n].track == note.track)
+                .is_some_and(|&n| {
+                    (note.start_time + note.duration - project.notes[n].start_time).abs() < 0.5
+                });
             plan.push(PlannedNote {
                 source_index: idx,
                 oto_alias,
@@ -404,6 +410,7 @@ mod tests {
             velocity: 100.0,
             volume: 100.0,
             modulation: 0.0,
+            track: 0,
         }
     }
 
@@ -491,5 +498,34 @@ mod tests {
         ]);
         assert_eq!(files, vec!["a.wav", "a_hi.wav"]);
         assert_eq!(missing, vec![2]);
+    }
+
+    #[test]
+    fn flags_change_the_rendered_sound_without_breaking_it() {
+        let mut engine = Engine::new();
+        engine.load_oto(b"a.wav=a,0,150,-100,40,20\n").unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        engine.cache_features("a.wav", generate_features(&audio, AnalysisMode::Fast, None).unwrap());
+
+        let mut render = |flags: &str| {
+            let mut n = note("a", 0.0, 600.0, 60);
+            n.flags = flags.into();
+            // The A flag reacts to pitch movement, so the note needs some.
+            n.pitchbend = vec![
+                PitchbendPointInfo { offset: 0.0, value: 0.0 },
+                PitchbendPointInfo { offset: 300.0, value: 200.0 },
+                PitchbendPointInfo { offset: 600.0, value: 0.0 },
+            ];
+            engine.begin(ProjectInfo { tempo: 120.0, notes: vec![n] });
+            while engine.step(4).unwrap() > 0 {}
+            engine.finish().unwrap()
+        };
+        let plain = render("");
+        for flags in ["g60", "g-60", "A80", "fe300", "g30A40fe200fv15"] {
+            let out = render(flags);
+            assert!(out.iter().all(|s| s.is_finite()), "{flags}");
+            assert!(out.iter().any(|s| s.abs() > 0.05), "{flags} is silent");
+            assert_ne!(out, plain, "{flags} had no effect");
+        }
     }
 }

@@ -57,6 +57,8 @@ type Gesture =
 	| { kind: 'pan'; lastX: number; lastY: number; samples: { t: number; x: number; y: number }[] }
 	| { kind: 'pending'; x: number; y: number; noteId: string | null; onNote: boolean }
 	| { kind: 'seek' }
+	| { kind: 'keys'; pitch: number }
+	| { kind: 'tempo'; tick: number; startX: number; moved: boolean }
 	| { kind: 'point'; noteId: string; pointId: string; origin: Note[] }
 	| {
 			kind: 'pinch';
@@ -81,6 +83,8 @@ export class RollController {
 	cursor = $state('default');
 	rubber = $state<Rect | null>(null);
 	guideTick = $state<number | null>(null);
+	/** Piano key currently held down (highlighted). */
+	pressedKey = $state<number | null>(null);
 	selectedPoint = $state<{ noteId: string; pointId: string } | null>(null);
 	editingLyricId = $state<string | null>(null);
 
@@ -264,8 +268,26 @@ export class RollController {
 				});
 				return;
 			}
+			const marker = this.tempoMarkerAt(p.x, p.y);
+			if (marker !== null) {
+				this.gesture = { kind: 'tempo', tick: marker, startX: p.x, moved: false };
+				return;
+			}
+			if (isDouble) {
+				const tick = Math.max(0, this.snap(this.tickAtX(p.x), false));
+				ui.openDialog('tempo', { tick });
+				return;
+			}
 			this.gesture = { kind: 'seek' };
 			playback.seekTick(this.snap(this.tickAtX(p.x), true));
+			return;
+		}
+
+		if (p.x < this.keysW && p.y >= RULER_H && e.button === 0) {
+			const pitch = clamp(Math.floor(this.pitchAtY(p.y)), MIN_PITCH, MAX_PITCH);
+			this.gesture = { kind: 'keys', pitch };
+			this.pressedKey = pitch;
+			void playback.preview(pitch);
 			return;
 		}
 
@@ -356,6 +378,12 @@ export class RollController {
 			case 'rubber':
 				this.rubber = null;
 				break;
+			case 'keys':
+				this.pressedKey = null;
+				break;
+			case 'tempo':
+				if (!g.moved) ui.openDialog('tempo', { tick: g.tick });
+				break;
 			case 'pan':
 				this.startInertia(g);
 				break;
@@ -433,18 +461,24 @@ export class RollController {
 			if (['move', 'resize', 'draw', 'point'].includes(g.kind)) project.cancelGesture();
 			this.gesture = null;
 			navigator.vibrate?.(12);
-			this.openContextMenu(e.clientX, e.clientY, p, note);
+			this.openContextMenu(e.clientX, e.clientY, p, note, true);
 		}, LONG_PRESS_MS);
 	}
 
-	private openContextMenu(cx: number, cy: number, p: { x: number; y: number }, note: Note | null) {
+	private openContextMenu(
+		cx: number,
+		cy: number,
+		p: { x: number; y: number },
+		note: Note | null,
+		guard = false
+	) {
 		if (note) {
 			if (!project.selection.has(note.id)) project.select([note.id]);
-			ui.openMenu({ x: cx, y: cy, items: noteMenu(note.id) });
+			ui.openMenu({ x: cx, y: cy, items: noteMenu(note.id), guard });
 		} else {
 			const tick = Math.max(0, this.snap(this.tickAtX(p.x), false, 'floor'));
 			const pitch = clamp(Math.floor(this.pitchAtY(p.y)), MIN_PITCH, MAX_PITCH);
-			ui.openMenu({ x: cx, y: cy, items: emptyMenu(tick, pitch) });
+			ui.openMenu({ x: cx, y: cy, items: emptyMenu(tick, pitch), guard });
 		}
 	}
 
@@ -522,6 +556,7 @@ export class RollController {
 		const tick = Math.max(0, this.snap(this.tickAtX(p.x), false, 'floor'));
 		const pitch = clamp(Math.floor(this.pitchAtY(p.y)), MIN_PITCH, MAX_PITCH);
 		const note = createNote({
+			track: project.activeTrack,
 			tick,
 			pitch,
 			length: this.snapStep(),
@@ -536,6 +571,7 @@ export class RollController {
 		const tick = Math.max(0, this.snap(this.tickAtX(p.x), false, 'floor'));
 		const pitch = clamp(Math.floor(this.pitchAtY(p.y)), MIN_PITCH, MAX_PITCH);
 		const note = createNote({
+			track: project.activeTrack,
 			tick,
 			pitch,
 			length: this.snapStep(),
@@ -695,6 +731,28 @@ export class RollController {
 			case 'seek':
 				playback.seekTick(this.snap(this.tickAtX(p.x), true));
 				break;
+			case 'keys': {
+				const pitch = clamp(Math.floor(this.pitchAtY(p.y)), MIN_PITCH, MAX_PITCH);
+				if (pitch !== g.pitch) {
+					g.pitch = pitch;
+					this.pressedKey = pitch;
+					void playback.preview(pitch);
+				}
+				break;
+			}
+			case 'tempo': {
+				if (!this.moved || g.tick === 0) break;
+				const to = Math.max(1, this.snap(this.tickAtX(p.x), shift));
+				if (!g.moved) {
+					g.moved = true;
+					project.beginTempoDrag();
+				}
+				if (to !== g.tick && !project.tempos.some((t) => t.tick === to)) {
+					project.moveTempo(g.tick, to);
+					g.tick = to;
+				}
+				break;
+			}
 			case 'rubber': {
 				const r = this.rubber!;
 				r.x1 = p.x;
@@ -787,6 +845,16 @@ export class RollController {
 		this.updateCursor(p);
 	}
 
+	/** Tick of the tempo marker under the pointer on the ruler, if any. */
+	private tempoMarkerAt(x: number, y: number): number | null {
+		if (y > 18) return null;
+		for (const t of project.tempos) {
+			const left = this.xAtTick(t.tick);
+			if (x >= left - 2 && x <= left + 58) return t.tick;
+		}
+		return null;
+	}
+
 	private updateHover(p: { x: number; y: number }) {
 		const hit = this.hitTest(p.x, p.y);
 		this.hoverId = hit?.note.id ?? null;
@@ -814,6 +882,7 @@ export class RollController {
 		this.gesture = null;
 		this.rubber = null;
 		this.guideTick = null;
+		this.pressedKey = null;
 	}
 
 	// ---- pinch (two-finger zoom + pan) ---------------------------------------------------------
