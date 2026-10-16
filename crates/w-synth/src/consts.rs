@@ -8,4 +8,9 @@ pub const FRAME_PERIOD: f64 = 5.;
 pub const FFT_SIZE: i32 = 2048;
 pub const D4C_THRESHOLD: f64 = 0.25;
 pub const MGC_DIMS: i32 = 64;
-pub const FEATURE_EXT: &'static str = "sc";
+/// Number of frames processed at once by CheapTrick / D4C. Keeps the peak
+/// memory of the analysis independent from the length of the source file.
+pub const ANALYSIS_CHUNK_FRAMES: usize = 256;
+/// Bump whenever the layout or the meaning of `WorldFeatures` changes so that
+/// features cached by the host application are invalidated.
+pub const ANALYSIS_VERSION: u32 = 2;

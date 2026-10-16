@@ -1,7 +1,8 @@
 [target.wasm32-unknown-emscripten]
 linker = "em++"
-
 rustflags = [
+    "-C", "target-feature=+simd128",
+
     "-C", "link-arg=-sSIDE_MODULE=0",
 
     "-C", "link-arg=-o",
@@ -10,15 +11,19 @@ rustflags = [
     "-C", "link-arg=-sMODULARIZE=1",
     "-C", "link-arg=-sEXPORT_ES6=1",
     "-C", "link-arg=-sEXPORT_NAME='WSynthModule'",
+    "-C", "link-arg=-sENVIRONMENT=web,worker,node",
+    "-C", "link-arg=-sFILESYSTEM=0",
 
-    "-C", "link-arg=-sEXPORTED_FUNCTIONS=['_malloc','_free','_wsynth_init','_wsynth_engine_create','_wsynth_engine_destroy','_wsynth_engine_load_oto','_wsynth_engine_load_prefix_map','_wsynth_engine_synthesize_project','_wsynth_free_buffer','_wsynth_analyze_wav','_wsynth_engine_cache_features']",
-
-    "-C", "link-arg=-sEXPORTED_RUNTIME_METHODS=['cwrap','setValue','getValue','allocateUTF8','HEAPU8']",
+    "-C", "link-arg=-sEXPORTED_FUNCTIONS=['_malloc','_free','_wsynth_init','_wsynth_analysis_version','_wsynth_engine_create','_wsynth_engine_destroy','_wsynth_engine_reset','_wsynth_engine_load_oto','_wsynth_engine_load_prefix_map','_wsynth_engine_oto_json','_wsynth_engine_required_files','_wsynth_engine_has_features','_wsynth_engine_cache_features','_wsynth_analyze_wav','_wsynth_session_begin','_wsynth_session_step','_wsynth_session_finish','_wsynth_engine_report','_wsynth_free_buffer']",
+    "-C", "link-arg=-sEXPORTED_RUNTIME_METHODS=['cwrap','getValue','HEAPU8']",
 
     "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",
+    "-C", "link-arg=-sMAXIMUM_MEMORY=4GB",
+    "-C", "link-arg=-sSTACK_SIZE=1MB",
 ]
 
 [env]
 CC_wasm32_unknown_emscripten = "emcc"
 CXX_wasm32_unknown_emscripten = "em++"
-CXXFLAGS_wasm32_unknown_emscripten = "-fPIC"
+CXXFLAGS_wasm32_unknown_emscripten = "-fPIC -msimd128"
+CFLAGS_wasm32_unknown_emscripten = "-fPIC -msimd128"
