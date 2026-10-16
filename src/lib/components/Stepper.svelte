@@ -10,8 +10,16 @@
 		onchange: (value: number) => void;
 		label?: string;
 	}
-	let { value, min = -Infinity, max = Infinity, step = 1, mixed = false, suffix = '', onchange, label }: Props =
-		$props();
+	let {
+		value,
+		min = -Infinity,
+		max = Infinity,
+		step = 1,
+		mixed = false,
+		suffix = '',
+		onchange,
+		label
+	}: Props = $props();
 
 	const clampValue = (v: number) => Math.min(max, Math.max(min, v));
 
@@ -22,7 +30,12 @@
 </script>
 
 <div class="stepper">
-	<button type="button" class="icon-btn" aria-label="Decrease {label ?? ''}" onclick={() => onchange(clampValue((value ?? 0) - step))}>−</button>
+	<button
+		type="button"
+		class="icon-btn"
+		aria-label="Decrease {label ?? ''}"
+		onclick={() => onchange(clampValue((value ?? 0) - step))}>−</button
+	>
 	<input
 		type="text"
 		inputmode="decimal"
@@ -35,7 +48,12 @@
 		}}
 	/>
 	{#if suffix}<span class="suffix">{suffix}</span>{/if}
-	<button type="button" class="icon-btn" aria-label="Increase {label ?? ''}" onclick={() => onchange(clampValue((value ?? 0) + step))}>+</button>
+	<button
+		type="button"
+		class="icon-btn"
+		aria-label="Increase {label ?? ''}"
+		onclick={() => onchange(clampValue((value ?? 0) + step))}>+</button
+	>
 </div>
 
 <style>
@@ -45,7 +63,9 @@
 		gap: 4px;
 	}
 	.icon-btn {
-		background: var(--panel-3);
+		background: var(--surface-hi);
+		box-shadow: var(--inset);
+		border: 1px solid var(--border);
 		font-size: 18px;
 		font-weight: 600;
 		width: var(--hit);

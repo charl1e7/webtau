@@ -15,7 +15,10 @@
 	<title>WebTAU — UTAU in your browser</title>
 	<meta name="description" content="A browser-based vocal synthesizer for UTAU voicebanks." />
 	<meta name="theme-color" content="#16181d" />
-	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+	<meta
+		name="viewport"
+		content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+	/>
 </svelte:head>
 
 {@render children()}

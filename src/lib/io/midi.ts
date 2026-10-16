@@ -124,7 +124,12 @@ export function parseMidi(bytes: Uint8Array): MidiFile {
 				target.lyric = l.text.replace(/^[-/\\]/, '').trim() || target.lyric;
 			}
 		}
-		tracks.push({ index: t, name: name || `Track ${t + 1}`, noteCount: sorted.length, notes: sorted });
+		tracks.push({
+			index: t,
+			name: name || `Track ${t + 1}`,
+			noteCount: sorted.length,
+			notes: sorted
+		});
 	}
 
 	if (!tempos.length || tempos[0].tick > 0) tempos.unshift({ tick: 0, bpm: tempos[0]?.bpm ?? 120 });
@@ -141,7 +146,11 @@ const be = (n: number, bytes: number): number[] =>
 	Array.from({ length: bytes }, (_, i) => (n >> (8 * (bytes - 1 - i))) & 0xff);
 
 /** Writes a format-0 MIDI file containing the notes, lyrics and tempo map. */
-export function serializeMidi(notes: readonly Note[], tempos: readonly TempoChange[], name: string) {
+export function serializeMidi(
+	notes: readonly Note[],
+	tempos: readonly TempoChange[],
+	name: string
+) {
 	type Ev = { tick: number; order: number; bytes: number[] };
 	const events: Ev[] = [];
 	const text = (type: number, s: string, tick: number) => {

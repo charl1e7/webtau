@@ -17,11 +17,13 @@
 		cursor: 'M5 3l14 7-6 2-2 6z',
 		pencil: 'M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4',
 		curve: 'M3 17c4 0 4-10 9-10s5 10 9 10',
-		eraser: 'M19 20H8l-4-4a2 2 0 0 1 0-2.8L13 4a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L12 18.5M9 8l7 7',
+		eraser:
+			'M19 20H8l-4-4a2 2 0 0 1 0-2.8L13 4a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L12 18.5M9 8l7 7',
 		trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
 		copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
 		paste: 'M9 4h6v3H9zM7 5.5H5V21h14V5.5h-2',
-		scissors: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12',
+		scissors:
+			'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12',
 		duplicate: 'M8 8h12v12H8zM4 16V4h12',
 		folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
 		file: 'M6 3h8l5 5v13H6zM14 3v5h5',
@@ -54,10 +56,11 @@
 </script>
 
 <script lang="ts">
-
-
-	let { name, size = 20, stroke = 1.8 }: { name: IconName; size?: number; stroke?: number } =
-		$props();
+	let {
+		name,
+		size = 20,
+		stroke = 1.8
+	}: { name: IconName; size?: number; stroke?: number } = $props();
 
 	const filled = $derived(name === 'play' || name === 'pause' || name === 'stop');
 </script>

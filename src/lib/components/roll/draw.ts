@@ -16,6 +16,7 @@ export interface Theme {
 	keyBlack: string;
 	keyText: string;
 	note: string;
+	noteHi: string;
 	noteEdge: string;
 	noteSelected: string;
 	noteText: string;
@@ -44,6 +45,7 @@ export function readTheme(el: Element): Theme {
 		keyBlack: v('--roll-key-black'),
 		keyText: v('--roll-key-text'),
 		note: v('--roll-note'),
+		noteHi: v('--roll-note-hi'),
 		noteEdge: v('--roll-note-edge'),
 		noteSelected: v('--roll-note-selected'),
 		noteText: v('--roll-note-text'),
@@ -133,6 +135,11 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: Frame) {
 	// corner
 	ctx.fillStyle = t.panel;
 	ctx.fillRect(0, 0, keysW, rulerH);
+	const cg = ctx.createLinearGradient(0, 0, 0, rulerH);
+	cg.addColorStop(0, 'rgba(255,255,255,0.05)');
+	cg.addColorStop(1, 'rgba(0,0,0,0.25)');
+	ctx.fillStyle = cg;
+	ctx.fillRect(0, 0, keysW, rulerH);
 	ctx.strokeStyle = t.border;
 	ctx.beginPath();
 	ctx.moveTo(keysW + 0.5, 0);
@@ -216,10 +223,31 @@ function drawNotes(ctx: CanvasRenderingContext2D, f: Frame) {
 		const isRest = n.lyric.toLowerCase() === 'r';
 
 		ctx.globalAlpha = isRest ? 0.45 : 1;
-		ctx.fillStyle = selected ? t.noteSelected : t.note;
+		const radius = Math.min(6, b.h / 3);
+		const grad = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+		grad.addColorStop(0, selected ? t.noteSelected : t.noteHi);
+		grad.addColorStop(1, selected ? t.noteHi : t.note);
+		ctx.save();
+		if (selected) {
+			ctx.shadowColor = t.accent;
+			ctx.shadowBlur = 16;
+		} else {
+			ctx.shadowColor = 'rgba(0,0,0,0.45)';
+			ctx.shadowBlur = 5;
+			ctx.shadowOffsetY = 1;
+		}
+		ctx.fillStyle = grad;
 		ctx.beginPath();
-		ctx.roundRect(b.x, b.y, b.w, b.h, Math.min(5, b.h / 3));
+		ctx.roundRect(b.x, b.y, b.w, b.h, radius);
 		ctx.fill();
+		ctx.restore();
+		// inner top highlight
+		ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.moveTo(b.x + radius, b.y + 1.5);
+		ctx.lineTo(b.x + b.w - radius, b.y + 1.5);
+		ctx.stroke();
 		ctx.globalAlpha = 1;
 
 		if (f.unknown.has(n.id)) {
@@ -227,11 +255,15 @@ function drawNotes(ctx: CanvasRenderingContext2D, f: Frame) {
 			ctx.lineWidth = 2;
 			ctx.setLineDash([4, 3]);
 		} else {
-			ctx.strokeStyle = selected ? t.accent : t.noteEdge;
-			ctx.lineWidth = selected ? 2 : 1;
+			ctx.strokeStyle = selected ? '#ffffff' : t.noteEdge;
+			ctx.globalAlpha = selected ? 0.9 : 0.55;
+			ctx.lineWidth = selected ? 1.5 : 1;
 			ctx.setLineDash([]);
 		}
+		ctx.beginPath();
+		ctx.roundRect(b.x, b.y, b.w, b.h, radius);
 		ctx.stroke();
+		ctx.globalAlpha = 1;
 		ctx.setLineDash([]);
 		ctx.lineWidth = 1;
 
@@ -247,9 +279,11 @@ function drawNotes(ctx: CanvasRenderingContext2D, f: Frame) {
 			ctx.beginPath();
 			ctx.rect(b.x + 2, b.y, b.w - 4, b.h);
 			ctx.clip();
-			ctx.fillStyle = selected ? '#2a0f1a' : t.noteText;
+			ctx.fillStyle = selected ? '#3a0a1f' : t.noteText;
+			ctx.shadowColor = selected ? 'transparent' : 'rgba(0,0,0,0.35)';
+			ctx.shadowBlur = 2;
 			const label = f.showNames && b.w > 70 ? `${n.lyric}  ${noteName(n.pitch)}` : n.lyric;
-			ctx.fillText(label, b.x + 6, b.y + b.h / 2 + 0.5);
+			ctx.fillText(label, b.x + (selected && f.touch ? 14 : 6), b.y + b.h / 2 + 0.5);
 			ctx.restore();
 		}
 
@@ -258,12 +292,16 @@ function drawNotes(ctx: CanvasRenderingContext2D, f: Frame) {
 	ctx.restore();
 }
 
-function drawGrips(ctx: CanvasRenderingContext2D, f: Frame, b: { x: number; y: number; w: number; h: number }) {
+function drawGrips(
+	ctx: CanvasRenderingContext2D,
+	f: Frame,
+	b: { x: number; y: number; w: number; h: number }
+) {
 	const { theme: t } = f;
 	if (f.touch) {
 		// Round, finger-sized handles on both ends.
-		const r = Math.min(10, Math.max(7, f.keyH * 0.42));
-		for (const cx of [b.x, b.x + b.w]) {
+		const r = Math.min(8, Math.max(6, f.keyH * 0.3));
+		for (const cx of [b.x + 1, b.x + b.w - 1]) {
 			ctx.beginPath();
 			ctx.arc(cx, b.y + b.h / 2, r, 0, Math.PI * 2);
 			ctx.fillStyle = t.noteText;
@@ -364,7 +402,9 @@ function drawPlayhead(ctx: CanvasRenderingContext2D, f: Frame) {
 	if (x < f.keysW || x > f.w) return;
 	ctx.save();
 	ctx.strokeStyle = f.theme.playhead;
-	ctx.lineWidth = 2;
+	ctx.shadowColor = f.theme.playhead;
+	ctx.shadowBlur = 10;
+	ctx.lineWidth = 1.5;
 	ctx.beginPath();
 	ctx.moveTo(x, 0);
 	ctx.lineTo(x, f.h);
@@ -393,18 +433,38 @@ function drawKeys(ctx: CanvasRenderingContext2D, f: Frame) {
 	ctx.clip();
 	ctx.font = `600 ${Math.max(9, Math.min(11, f.keyH * 0.5))}px ${t.font}`;
 	ctx.textBaseline = 'middle';
+
+	const ivory = ctx.createLinearGradient(0, 0, f.keysW, 0);
+	ivory.addColorStop(0, t.keyWhite);
+	ivory.addColorStop(1, 'rgba(160,160,172,0.75)');
+	const blackW = f.keysW * 0.62;
+
 	for (let p = MAX_PITCH; p >= MIN_PITCH; p--) {
 		const y = rowTop(f, p);
 		if (y > f.h || y + f.keyH < f.rulerH) continue;
-		const black = isBlackKey(p);
-		ctx.fillStyle = black ? t.keyBlack : t.keyWhite;
+		// white key underneath every row
+		ctx.fillStyle = t.keyWhite;
 		ctx.fillRect(0, y, f.keysW, f.keyH);
-		ctx.fillStyle = t.border;
+		ctx.fillStyle = ivory;
+		ctx.fillRect(0, y, f.keysW, f.keyH);
+		ctx.fillStyle = 'rgba(0,0,0,0.18)';
 		ctx.fillRect(0, y + f.keyH - 1, f.keysW, 1);
-		if (p % 12 === 0 || (f.keyH >= 20 && !black)) {
-			ctx.fillStyle = black ? t.keyWhite : t.keyText;
+
+		if (isBlackKey(p)) {
+			const g = ctx.createLinearGradient(0, y, blackW, y);
+			g.addColorStop(0, '#07070a');
+			g.addColorStop(0.85, t.keyBlack);
+			g.addColorStop(1, '#3a3a45');
+			ctx.fillStyle = g;
+			ctx.beginPath();
+			ctx.roundRect(0, y + 1, blackW, f.keyH - 2, [0, 4, 4, 0]);
+			ctx.fill();
+			ctx.fillStyle = 'rgba(255,255,255,0.14)';
+			ctx.fillRect(2, y + 2, blackW - 6, 1);
+		} else if (p % 12 === 0 || f.keyH >= 20) {
+			ctx.fillStyle = p % 12 === 0 ? '#2b2b34' : t.keyText;
 			ctx.textAlign = 'right';
-			ctx.fillText(noteName(p), f.keysW - 6, y + f.keyH / 2 + 0.5);
+			ctx.fillText(noteName(p), f.keysW - 7, y + f.keyH / 2 + 0.5);
 		}
 	}
 	ctx.restore();
@@ -416,7 +476,12 @@ function drawRuler(ctx: CanvasRenderingContext2D, f: Frame) {
 	ctx.beginPath();
 	ctx.rect(f.keysW, 0, f.w - f.keysW, f.rulerH);
 	ctx.clip();
+	const rg = ctx.createLinearGradient(0, 0, 0, f.rulerH);
+	rg.addColorStop(0, 'rgba(255,255,255,0.05)');
+	rg.addColorStop(1, 'rgba(0,0,0,0.25)');
 	ctx.fillStyle = t.panel;
+	ctx.fillRect(f.keysW, 0, f.w - f.keysW, f.rulerH);
+	ctx.fillStyle = rg;
 	ctx.fillRect(f.keysW, 0, f.w - f.keysW, f.rulerH);
 
 	const [t0, t1] = visibleTicks(f);
@@ -457,12 +522,13 @@ function drawRuler(ctx: CanvasRenderingContext2D, f: Frame) {
 		if (x < f.keysW - 60 || x > f.w) continue;
 		const label = `♩${Math.round(change.bpm * 10) / 10}`;
 		const lw = ctx.measureText(label).width + 8;
-		ctx.fillStyle = t.accent;
-		ctx.globalAlpha = 0.9;
+		const chip = ctx.createLinearGradient(0, 2, 0, 15);
+		chip.addColorStop(0, t.noteHi);
+		chip.addColorStop(1, t.note);
+		ctx.fillStyle = chip;
 		ctx.beginPath();
-		ctx.roundRect(x, 2, lw, 13, 3);
+		ctx.roundRect(x, 2, lw, 13, 4);
 		ctx.fill();
-		ctx.globalAlpha = 1;
 		ctx.fillStyle = '#fff';
 		ctx.fillText(label, x + 4, 9);
 	}
@@ -470,6 +536,8 @@ function drawRuler(ctx: CanvasRenderingContext2D, f: Frame) {
 	if (f.playTick !== null) {
 		const x = xAt(f, f.playTick);
 		ctx.fillStyle = t.playhead;
+		ctx.shadowColor = t.playhead;
+		ctx.shadowBlur = 8;
 		ctx.beginPath();
 		ctx.moveTo(x - 6, f.rulerH - 11);
 		ctx.lineTo(x + 6, f.rulerH - 11);
@@ -479,4 +547,3 @@ function drawRuler(ctx: CanvasRenderingContext2D, f: Frame) {
 	}
 	ctx.restore();
 }
-

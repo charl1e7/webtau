@@ -4,7 +4,8 @@ import type { AnalyzerReply, AnalyzerRequest } from './protocol';
 
 let bridge: WasmBridge | null = null;
 
-const reply = (msg: AnalyzerReply, transfer: Transferable[] = []) => self.postMessage(msg, transfer);
+const reply = (msg: AnalyzerReply, transfer: Transferable[] = []) =>
+	self.postMessage(msg, transfer);
 
 self.onmessage = async (event: MessageEvent<AnalyzerRequest>) => {
 	const msg = event.data;

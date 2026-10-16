@@ -40,15 +40,15 @@ export function moveNotes(
 	return mapSelected(notes, ids, (n) => ({ ...n, tick: n.tick + dt, pitch: n.pitch + dp }));
 }
 
-export function transposeNotes(notes: readonly Note[], ids: ReadonlySet<string>, semitones: number) {
+export function transposeNotes(
+	notes: readonly Note[],
+	ids: ReadonlySet<string>,
+	semitones: number
+) {
 	return moveNotes(notes, ids, 0, semitones);
 }
 
-export function setLength(
-	notes: readonly Note[],
-	id: string,
-	length: number
-): Note[] {
+export function setLength(notes: readonly Note[], id: string, length: number): Note[] {
 	return notes.map((n) => (n.id === id ? { ...n, length: Math.max(MIN_NOTE_TICKS, length) } : n));
 }
 

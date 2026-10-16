@@ -14,7 +14,8 @@
 	];
 
 	const GRIDS = [1, 2, 4, 8, 12, 16, 24, 32, 48, 64];
-	const gridLabel = (d: number) => (d === 12 ? '1/8T' : d === 24 ? '1/16T' : d === 48 ? '1/32T' : `1/${d}`);
+	const gridLabel = (d: number) =>
+		d === 12 ? '1/8T' : d === 24 ? '1/16T' : d === 48 ? '1/32T' : `1/${d}`;
 
 	let { zoom }: { zoom: (fx: number, fy: number) => void } = $props();
 </script>
@@ -37,7 +38,7 @@
 
 	<div class="group">
 		<label class="grid" title="Grid resolution">
-			<Icon name="grid" size={16} />
+			{#if !ui.compact}<Icon name="grid" size={16} />{/if}
 			<select
 				aria-label="Grid"
 				value={settings.data.gridDivision}
@@ -62,16 +63,36 @@
 
 	{#if !ui.compact}
 		<div class="group">
-			<button class="icon-btn" title="Zoom out (−)" aria-label="Zoom out horizontally" onclick={() => zoom(1 / 1.25, 1)}>
+			<button
+				class="icon-btn"
+				title="Zoom out (−)"
+				aria-label="Zoom out horizontally"
+				onclick={() => zoom(1 / 1.25, 1)}
+			>
 				<Icon name="zoomOut" />
 			</button>
-			<button class="icon-btn" title="Zoom in (+)" aria-label="Zoom in horizontally" onclick={() => zoom(1.25, 1)}>
+			<button
+				class="icon-btn"
+				title="Zoom in (+)"
+				aria-label="Zoom in horizontally"
+				onclick={() => zoom(1.25, 1)}
+			>
 				<Icon name="zoomIn" />
 			</button>
-			<button class="icon-btn" title="Taller keys" aria-label="Taller keys" onclick={() => zoom(1, 1.2)}>
+			<button
+				class="icon-btn"
+				title="Taller keys"
+				aria-label="Taller keys"
+				onclick={() => zoom(1, 1.2)}
+			>
 				<Icon name="arrowUp" />
 			</button>
-			<button class="icon-btn" title="Shorter keys" aria-label="Shorter keys" onclick={() => zoom(1, 1 / 1.2)}>
+			<button
+				class="icon-btn"
+				title="Shorter keys"
+				aria-label="Shorter keys"
+				onclick={() => zoom(1, 1 / 1.2)}
+			>
 				<Icon name="arrowDown" />
 			</button>
 		</div>
@@ -96,9 +117,6 @@
 		>
 			<Icon name="sliders" />
 		</button>
-		<button class="icon-btn" aria-label="Settings" onclick={() => ui.openDialog('settings')}>
-			<Icon name="settings" />
-		</button>
 	{/if}
 </div>
 
@@ -106,9 +124,9 @@
 	.toolbar {
 		display: flex;
 		align-items: center;
-		gap: 10px;
-		padding: 4px 10px;
-		background: var(--panel);
+		gap: 12px;
+		padding: 8px 12px;
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent);
 		border-bottom: 1px solid var(--border);
 		flex: none;
 		overflow-x: auto;
@@ -117,23 +135,31 @@
 	.toolbar.compact {
 		border-bottom: 0;
 		border-top: 1px solid var(--border);
-		padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
-		gap: 4px;
+		padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+		gap: 6px;
 		justify-content: space-between;
 	}
 	.group {
 		display: flex;
 		align-items: center;
 		gap: 2px;
-		padding-right: 10px;
-		border-right: 1px solid var(--border);
+		padding: 3px;
+		background: var(--panel-2);
+		border: 1px solid var(--border);
+		border-radius: 14px;
+		box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.4);
 	}
 	.compact .group {
-		padding-right: 4px;
-		border-right: 0;
+		padding: 2px;
 	}
-	.group:last-of-type {
-		border-right: 0;
+	.compact {
+		--hit: 38px;
+		gap: 4px;
+	}
+	.compact .grid select {
+		padding: 0 18px 0 8px;
+		background-position: right 3px center;
+		min-width: 0;
 	}
 	.grid {
 		display: flex;

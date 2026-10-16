@@ -11,21 +11,10 @@
 		"strict": true,
 		"moduleResolution": "bundler",
 		"paths": {
-			"#lib/*": [
-				"./src/lib/*"
-			],
-			"$app/types": [
-				"./.svelte-kit/types/index.d.ts"
-			]
+			"#lib/*": ["./src/lib/*"],
+			"$app/types": ["./.svelte-kit/types/index.d.ts"]
 		}
 	},
-	"include": [
-		"src",
-		"scripts",
-		"*"
-	],
-	"exclude": [
-		"src/service-worker",
-		"src/lib/engine/wasm/*.js"
-	]
+	"include": ["src", "scripts", "*"],
+	"exclude": ["src/service-worker.ts", "src/service-worker", "src/lib/engine/wasm/*.js"]
 }

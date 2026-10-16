@@ -11,7 +11,7 @@
 <style>
 	.toasts {
 		position: fixed;
-		top: calc(var(--topbar-h) + 10px);
+		top: calc(var(--topbar-h) + 24px);
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 90;
@@ -23,8 +23,9 @@
 	.toast {
 		padding: 10px 14px;
 		border-radius: 10px;
-		background: var(--panel-3);
-		border: 1px solid var(--border);
+		background: color-mix(in srgb, var(--panel) 92%, transparent);
+		backdrop-filter: blur(12px);
+		border: 1px solid var(--border-strong);
 		box-shadow: var(--shadow);
 		font-size: 13px;
 		line-height: 1.4;

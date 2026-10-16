@@ -30,13 +30,38 @@ export function editMenu(): MenuItem[] {
 	const has = project.selection.size > 0;
 	return [
 		{ label: 'Undo', icon: 'undo', hint: 'Ctrl+Z', disabled: !project.canUndo, action: edit.undo },
-		{ label: 'Redo', icon: 'redo', hint: 'Ctrl+Shift+Z', disabled: !project.canRedo, action: edit.redo },
+		{
+			label: 'Redo',
+			icon: 'redo',
+			hint: 'Ctrl+Shift+Z',
+			disabled: !project.canRedo,
+			action: edit.redo
+		},
 		sep,
 		{ label: 'Cut', icon: 'scissors', hint: 'Ctrl+X', disabled: !has, action: edit.cut },
 		{ label: 'Copy', icon: 'copy', hint: 'Ctrl+C', disabled: !has, action: edit.copy },
-		{ label: 'Paste', icon: 'paste', hint: 'Ctrl+V', disabled: !project.clipboard.length, action: edit.paste },
-		{ label: 'Duplicate', icon: 'duplicate', hint: 'Ctrl+D', disabled: !has, action: edit.duplicate },
-		{ label: 'Delete', icon: 'trash', hint: 'Del', danger: true, disabled: !has, action: edit.delete },
+		{
+			label: 'Paste',
+			icon: 'paste',
+			hint: 'Ctrl+V',
+			disabled: !project.clipboard.length,
+			action: edit.paste
+		},
+		{
+			label: 'Duplicate',
+			icon: 'duplicate',
+			hint: 'Ctrl+D',
+			disabled: !has,
+			action: edit.duplicate
+		},
+		{
+			label: 'Delete',
+			icon: 'trash',
+			hint: 'Del',
+			danger: true,
+			disabled: !has,
+			action: edit.delete
+		},
 		sep,
 		{ label: 'Select all', hint: 'Ctrl+A', action: edit.selectAll },
 		{ label: 'Lyrics…', icon: 'text', hint: 'Ctrl+L', action: () => ui.openDialog('lyrics') },
@@ -73,17 +98,31 @@ function toolsSubmenu(): MenuItem {
 export function noteMenu(id: string): MenuItem[] {
 	const many = project.selection.size > 1;
 	const note = project.notes.find((n) => n.id === id);
-	return [
-		{ label: many ? `${project.selection.size} notes selected` : `${note?.lyric ?? ''} · ${note ? noteName(note.pitch) : ''}`, disabled: true },
+	const remove: MenuItem = {
+		label: 'Delete',
+		icon: 'trash',
+		hint: 'Del',
+		danger: true,
+		action: edit.delete
+	};
+	const items: MenuItem[] = [
+		{
+			label: many
+				? `${project.selection.size} notes selected`
+				: `${note?.lyric ?? ''} · ${note ? noteName(note.pitch) : ''}`,
+			disabled: true
+		},
 		{
 			label: 'Edit lyric',
 			icon: 'text',
 			hint: 'Enter / dbl-click',
 			action: () => (ui.requestLyricEdit = id)
 		},
+		// On phones the sheet is tall: keep the most used actions within thumb reach.
+		...(ui.compact ? [remove] : []),
+		{ label: 'Duplicate', icon: 'duplicate', hint: 'Ctrl+D', action: edit.duplicate },
 		{ label: 'Properties…', icon: 'sliders', action: () => (ui.panel = 'inspector') },
 		sep,
-		{ label: 'Duplicate', icon: 'duplicate', hint: 'Ctrl+D', action: edit.duplicate },
 		{ label: 'Copy', icon: 'copy', action: edit.copy },
 		{ label: 'Cut', icon: 'scissors', action: edit.cut },
 		sep,
@@ -120,9 +159,9 @@ export function noteMenu(id: string): MenuItem[] {
 				{ label: '−1 octave', action: () => edit.transpose(-12) }
 			]
 		},
-		sep,
-		{ label: 'Delete', icon: 'trash', hint: 'Del', danger: true, action: edit.delete }
+		...(ui.compact ? [] : [sep, remove])
 	];
+	return items;
 }
 
 export function emptyMenu(tick: number, pitchValue: number): MenuItem[] {

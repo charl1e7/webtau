@@ -21,7 +21,8 @@
 		return sel.every((n) => n[key] === first) ? first : undefined;
 	}
 
-	const apply = (patch: Partial<Note>, key?: string) => project.updateSelected(patch, key ?? Object.keys(patch)[0]);
+	const apply = (patch: Partial<Note>, key?: string) =>
+		project.updateSelected(patch, key ?? Object.keys(patch)[0]);
 
 	const lyric = $derived(common('lyric'));
 	const midi = $derived(common('pitch'));
@@ -70,13 +71,16 @@
 		project.edit(
 			(notes) =>
 				notes.map((n) =>
-					project.selection.has(n.id) ? { ...n, vibrato: { ...(n.vibrato ?? DEFAULT_VIBRATO), ...patch } } : n
+					project.selection.has(n.id)
+						? { ...n, vibrato: { ...(n.vibrato ?? DEFAULT_VIBRATO), ...patch } }
+						: n
 				),
 			{ coalesce: 'vibrato' }
 		);
 	}
 
-	const fmtTime = (ms: number) => `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(1).padStart(4, '0')}`;
+	const fmtTime = (ms: number) =>
+		`${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(1).padStart(4, '0')}`;
 </script>
 
 <div class="inspector">
@@ -84,7 +88,12 @@
 		<h2>Project</h2>
 		<div class="field">
 			<label for="proj-name">Name</label>
-			<input id="proj-name" type="text" bind:value={project.name} onchange={() => (project.dirty = true)} />
+			<input
+				id="proj-name"
+				type="text"
+				bind:value={project.name}
+				onchange={() => (project.dirty = true)}
+			/>
 		</div>
 		<div class="field">
 			<span class="label">Tempo</span>
@@ -104,10 +113,13 @@
 		<div class="field">
 			<span class="label">Summary</span>
 			<span class="hint">
-				{project.notes.length} notes · {fmtTime(totalMs)} · {project.timeSignature.numerator}/{project.timeSignature.denominator}
+				{project.notes.length} notes · {fmtTime(totalMs)} · {project.timeSignature
+					.numerator}/{project.timeSignature.denominator}
 			</span>
 			{#if project.voicebankName}
-				<span class="hint">Voicebank: {voicebank.current?.name ?? `${project.voicebankName} (not loaded)`}</span>
+				<span class="hint"
+					>Voicebank: {voicebank.current?.name ?? `${project.voicebankName} (not loaded)`}</span
+				>
 			{/if}
 		</div>
 		<p class="hint">
@@ -127,7 +139,8 @@
 				autocapitalize="off"
 				value={lyric ?? ''}
 				placeholder={lyric === undefined ? 'mixed' : ''}
-				onchange={(e) => e.currentTarget.value.trim() && apply({ lyric: e.currentTarget.value.trim() })}
+				onchange={(e) =>
+					e.currentTarget.value.trim() && apply({ lyric: e.currentTarget.value.trim() })}
 			/>
 			<datalist id="alias-list">
 				{#each voicebank.aliases.slice(0, 800) as alias (alias)}
@@ -142,7 +155,14 @@
 		<div class="grid2">
 			<div class="field">
 				<span class="label">Pitch {midi !== undefined ? `· ${noteName(midi)}` : ''}</span>
-				<Stepper label="Pitch" value={midi} mixed={midi === undefined} min={12} max={119} onchange={(v) => apply({ pitch: Math.round(v) })} />
+				<Stepper
+					label="Pitch"
+					value={midi}
+					mixed={midi === undefined}
+					min={12}
+					max={119}
+					onchange={(v) => apply({ pitch: Math.round(v) })}
+				/>
 			</div>
 			<div class="field">
 				<span class="label">Length {durationMs !== undefined ? `· ${durationMs} ms` : ''}</span>
@@ -151,7 +171,7 @@
 					value={length}
 					mixed={length === undefined}
 					min={15}
-					step={step}
+					{step}
 					suffix="t"
 					onchange={(v) => apply({ length: Math.round(v) })}
 				/>
@@ -165,11 +185,15 @@
 				value={tick}
 				mixed={tick === undefined}
 				min={0}
-				step={step}
+				{step}
 				suffix="t"
 				onchange={(v) => apply({ tick: Math.round(v) })}
 			/>
-			<span class="hint">{PPQ} ticks per quarter note. Last note ends at {sel.length ? Math.max(...sel.map(noteEnd)) : 0} t.</span>
+			<span class="hint"
+				>{PPQ} ticks per quarter note. Last note ends at {sel.length
+					? Math.max(...sel.map(noteEnd))
+					: 0} t.</span
+			>
 		</div>
 
 		<h3>Expression</h3>
@@ -229,12 +253,22 @@
 		<div class="row wrap">
 			<button class="btn" onclick={() => pitch.portamento()}>Portamento</button>
 			<button class="btn" onclick={() => pitch.clear()}>Clear curve</button>
-			<button class="btn" onclick={() => ui.setStatus('Choose the Pitch tool to edit the curve')} disabled>
-				{sel.some((n) => n.pitchPoints.length) ? `${sel.reduce((n, s) => n + s.pitchPoints.length, 0)} points` : 'No curve'}
+			<button
+				class="btn"
+				onclick={() => ui.setStatus('Choose the Pitch tool to edit the curve')}
+				disabled
+			>
+				{sel.some((n) => n.pitchPoints.length)
+					? `${sel.reduce((n, s) => n + s.pitchPoints.length, 0)} points`
+					: 'No curve'}
 			</button>
 		</div>
 		<label class="check">
-			<input type="checkbox" checked={anyVib} onchange={(e) => pitch.vibrato(e.currentTarget.checked)} />
+			<input
+				type="checkbox"
+				checked={anyVib}
+				onchange={(e) => pitch.vibrato(e.currentTarget.checked)}
+			/>
 			Vibrato
 		</label>
 		{#if vib}
@@ -260,15 +294,22 @@
 		padding: 14px;
 	}
 	h2 {
-		margin: 0 0 12px;
-		font-size: 15px;
+		margin: 0 0 16px;
+		padding-bottom: 12px;
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.16em;
+		color: var(--muted);
+		border-bottom: 1px solid var(--border);
 	}
 	h3 {
-		margin: 18px 0 8px;
-		font-size: 12px;
+		margin: 22px 0 10px;
+		font-size: 11px;
+		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--muted);
+		letter-spacing: 0.14em;
+		color: var(--accent-2);
 	}
 	.grid2 {
 		display: grid;

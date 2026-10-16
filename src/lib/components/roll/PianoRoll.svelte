@@ -50,7 +50,7 @@
 
 	// Theme colours come from CSS variables; re-read whenever the theme changes.
 	$effect(() => {
-		settings.data.theme;
+		void settings.data.theme;
 		if (!host) return;
 		queueMicrotask(() => (theme = readTheme(host!)));
 		const mq = matchMedia('(prefers-color-scheme: light)');
@@ -126,7 +126,7 @@
 	});
 
 	$effect(() => {
-		project.loadCount;
+		void project.loadCount;
 		untrack(() => c.showSong());
 	});
 
@@ -137,8 +137,8 @@
 
 	// Keep the scroll position valid when zooming / resizing the content.
 	$effect(() => {
-		view.pxPerTick;
-		view.keyHeight;
+		void view.pxPerTick;
+		void view.keyHeight;
 		untrack(() => c.setScroll(c.scrollX, c.scrollY));
 	});
 
@@ -155,6 +155,7 @@
 		style:width="{c.width}px"
 		style:height="{c.height}px"
 		style:cursor={c.cursor}
+		onmousedown={(e) => e.preventDefault()}
 		onpointerdown={c.onPointerDown}
 		onpointermove={c.onPointerMove}
 		onpointerup={c.onPointerUp}

@@ -116,11 +116,12 @@ export class SynthClient {
 		onProgress?: (done: number, total: number) => void
 	): { promise: Promise<RenderResult | null>; cancel: () => void } {
 		const id = this.nextId++;
-		const promise = this.request({ type: 'render', notes, tempo }, { id, onProgress }).then(
-			(r) => ('cancelled' in r ? null : r)
+		const promise = this.request({ type: 'render', notes, tempo }, { id, onProgress }).then((r) =>
+			'cancelled' in r ? null : r
 		);
 		const cancel = () => {
-			if (this.pending.has(id)) this.worker.postMessage({ type: 'cancel', id } satisfies WorkerCancel);
+			if (this.pending.has(id))
+				this.worker.postMessage({ type: 'cancel', id } satisfies WorkerCancel);
 		};
 		return { promise, cancel };
 	}

@@ -40,7 +40,11 @@ export function createNote(init: Partial<Note> & Pick<Note, 'tick' | 'pitch'>): 
 	};
 }
 
-export function createPitchPoint(x: number, y: number, shape: PitchPoint['shape'] = 'l'): PitchPoint {
+export function createPitchPoint(
+	x: number,
+	y: number,
+	shape: PitchPoint['shape'] = 'l'
+): PitchPoint {
 	return { id: uid(), x, y, shape };
 }
 

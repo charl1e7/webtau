@@ -130,8 +130,7 @@ export class WasmBridge {
 	call = {
 		reset: (e: number) => this.fn.reset(e),
 		destroy: (e: number) => this.fn.destroy(e),
-		loadOto: (e: number, d: Uint8Array) =>
-			!!this.withBytes(d, (p, l) => this.fn.loadOto(e, p, l)),
+		loadOto: (e: number, d: Uint8Array) => !!this.withBytes(d, (p, l) => this.fn.loadOto(e, p, l)),
 		loadPrefix: (e: number, d: Uint8Array) =>
 			!!this.withBytes(d, (p, l) => this.fn.loadPrefix(e, p, l)),
 		otoEntries: (e: number) =>

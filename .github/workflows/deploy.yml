@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+  # Preview builds of the work-in-progress branch.
+  push:
+    branches: [ccr-45969756-vq9yqm]
 
 permissions:
   contents: read
@@ -11,14 +14,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -32,44 +32,53 @@ jobs:
           version: '4.0.10'
           actions-cache-folder: 'emsdk-cache'
 
-      - name: Verify Emscripten installation
-        run: emcc -v
-
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.87.0
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.87.0
+          targets: wasm32-unknown-emscripten
 
-      - name: Add wasm32-unknown-emscripten target
-        run: rustup target add wasm32-unknown-emscripten
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: 'npm'
+          node-version: 22
+          cache: npm
 
       - name: Install NPM dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build Rust (Wasm) component
-        run: |
-          chmod +x ./build.sh
-          ./build.sh release
+      - name: Build the audio engine (Rust -> WebAssembly)
+        run: ./build.sh release
 
-      - name: Build SvelteKit app
+      - name: Build the web app
         env:
-          BASE_PATH: /webtau 
+          BASE_PATH: /webtau
         run: npm run build
+
+      - name: Upload site as a downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webtau-site
+          path: build
+          retention-days: 14
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './build'
+          path: ./build
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

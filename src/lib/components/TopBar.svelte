@@ -30,7 +30,7 @@
 	const bpm = $derived(Math.round(project.primaryTempo * 10) / 10);
 </script>
 
-<header class="topbar">
+<header class="topbar card">
 	<div class="left">
 		{#if ui.compact}
 			<button class="icon-btn" aria-label="Menu" onclick={(e) => dropdown(e, mainMenu)}>
@@ -47,9 +47,20 @@
 	</div>
 
 	<div class="transport" role="group" aria-label="Transport">
-		<button class="icon-btn" title="Back to start (Home)" aria-label="Back to start" onclick={() => playback.stop()}>
-			<Icon name="rewind" />
-		</button>
+		{#if !ui.compact}
+			<button
+				class="icon-btn"
+				title="Back to start (Home)"
+				aria-label="Back to start"
+				onclick={() => playback.stop()}
+			>
+				<Icon name="rewind" />
+			</button>
+		{:else if playback.playing || playback.positionMs > 0}
+			<button class="icon-btn" title="Stop" aria-label="Stop" onclick={() => playback.stop()}>
+				<Icon name="stop" size={18} />
+			</button>
+		{/if}
 		<button
 			class="icon-btn accent play"
 			title={playback.playing ? 'Pause (Space)' : 'Play (Space)'}
@@ -75,15 +86,33 @@
 
 	<div class="right">
 		{#if !ui.compact}
-			<button class="btn tempo" onclick={() => ui.openDialog('tempo', { tick: 0 })} title="Tempo & time signature">
+			<button
+				class="btn tempo"
+				onclick={() => ui.openDialog('tempo', { tick: 0 })}
+				title="Tempo & time signature"
+			>
 				♩ {bpm}
-				<span class="sig">{project.timeSignature.numerator}/{project.timeSignature.denominator}</span>
+				<span class="sig"
+					>{project.timeSignature.numerator}/{project.timeSignature.denominator}</span
+				>
 			</button>
 		{/if}
-		<button class="icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!project.canUndo} onclick={edit.undo}>
+		<button
+			class="icon-btn"
+			title="Undo (Ctrl+Z)"
+			aria-label="Undo"
+			disabled={!project.canUndo}
+			onclick={edit.undo}
+		>
 			<Icon name="undo" />
 		</button>
-		<button class="icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!project.canRedo} onclick={edit.redo}>
+		<button
+			class="icon-btn"
+			title="Redo (Ctrl+Shift+Z)"
+			aria-label="Redo"
+			disabled={!project.canRedo}
+			onclick={edit.redo}
+		>
 			<Icon name="redo" />
 		</button>
 		{#if !ui.compact}
@@ -105,12 +134,21 @@
 			>
 				<Icon name="sliders" />
 			</button>
-			<button class="icon-btn" title="Settings" aria-label="Settings" onclick={() => ui.openDialog('settings')}>
+			<button
+				class="icon-btn"
+				title="Settings"
+				aria-label="Settings"
+				onclick={() => ui.openDialog('settings')}
+			>
 				<Icon name="settings" />
 			</button>
 		{:else}
-			<button class="btn tempo" onclick={() => ui.openDialog('tempo', { tick: 0 })} aria-label="Tempo">
-				♩ {bpm}
+			<button
+				class="btn tempo compact-tempo"
+				onclick={() => ui.openDialog('tempo', { tick: 0 })}
+				aria-label="Tempo"
+			>
+				♩{bpm}
 			</button>
 		{/if}
 	</div>
@@ -123,10 +161,9 @@
 		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		gap: 8px;
-		padding: 0 10px;
-		background: var(--panel);
-		border-bottom: 1px solid var(--border);
+		padding: 0 12px;
 		flex: none;
+		overflow: visible;
 	}
 	.left,
 	.right {
@@ -141,20 +178,34 @@
 	.brand {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		font-weight: 700;
-		font-size: 16px;
-		letter-spacing: 0.01em;
-		margin-right: 8px;
+		gap: 10px;
+		font-weight: 750;
+		font-size: 17px;
+		letter-spacing: 0.02em;
+		margin-right: 10px;
+	}
+	.brand span {
+		background: linear-gradient(135deg, #ffffff 0%, #ffc2da 55%, #ff7ab0 100%);
+		-webkit-background-clip: text;
+		background-clip: text;
+		-webkit-text-fill-color: transparent;
 	}
 	.brand img {
-		border-radius: 6px;
+		border-radius: 8px;
+		box-shadow:
+			0 0 0 1px rgba(255, 255, 255, 0.1),
+			0 4px 14px rgba(255, 61, 143, 0.3);
 	}
 	.transport {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 8px;
 		position: relative;
+		padding: 5px 14px 5px 8px;
+		background: var(--panel-2);
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
 	}
 	.play {
 		width: 42px;
@@ -163,23 +214,27 @@
 	}
 	.clock {
 		display: grid;
-		min-width: 62px;
+		min-width: 66px;
 		text-align: center;
 		font-variant-numeric: tabular-nums;
 		line-height: 1.15;
 	}
 	.time {
 		font-weight: 700;
-		font-size: 15px;
+		font-size: 16px;
+		letter-spacing: 0.02em;
+		text-shadow: 0 0 14px rgba(255, 61, 143, 0.55);
 	}
 	.pos {
 		color: var(--muted);
 		font-size: 11px;
 	}
 	.tempo {
-		min-height: 32px;
-		padding: 0 10px;
+		min-height: 34px;
+		padding: 0 12px;
+		margin-right: 6px;
 		font-variant-numeric: tabular-nums;
+		border-radius: 999px;
 	}
 	.sig {
 		color: var(--muted);
@@ -187,9 +242,9 @@
 	}
 	.progress {
 		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: -9px;
+		left: 18px;
+		right: 18px;
+		bottom: -1px;
 		height: 3px;
 		border-radius: 2px;
 		background: var(--panel-3);
@@ -215,12 +270,25 @@
 	}
 	@media (max-width: 820px), (max-height: 520px) {
 		.topbar {
-			padding: 0 4px;
-			grid-template-columns: auto 1fr auto;
+			padding: 0 6px;
+			grid-template-columns: auto minmax(0, 1fr) auto;
 			gap: 4px;
 		}
 		.transport {
-			justify-content: center;
+			justify-self: center;
+			padding: 4px 12px 4px 5px;
+			gap: 6px;
+		}
+		.clock {
+			min-width: 52px;
+		}
+		.time {
+			font-size: 15px;
+		}
+		.compact-tempo {
+			min-height: 32px;
+			padding: 0 9px;
+			margin: 0 0 0 2px;
 		}
 		:global(:root) {
 			--topbar-h: 50px;

@@ -21,7 +21,10 @@
 		project.edit((notes) =>
 			notes.map((n) =>
 				n.id === point.noteId
-					? { ...n, pitchPoints: n.pitchPoints.map((p) => (p.id === point.pointId ? { ...p, shape } : p)) }
+					? {
+							...n,
+							pitchPoints: n.pitchPoints.map((p) => (p.id === point.pointId ? { ...p, shape } : p))
+						}
 					: n
 			)
 		);
@@ -52,7 +55,9 @@
 						title={s.label}
 						onclick={() => setShape(s.shape)}
 					>
-						<span class="shape">{s.shape === 'l' ? '╱' : s.shape === 's' ? '∫' : s.shape === 'r' ? '⌒' : '⌐'}</span>
+						<span class="shape"
+							>{s.shape === 'l' ? '╱' : s.shape === 's' ? '∫' : s.shape === 'r' ? '⌒' : '⌐'}</span
+						>
 					</button>
 				{/each}
 				<button
@@ -64,14 +69,26 @@
 				</button>
 				<span class="sep"></span>
 			{/if}
-			<button class="btn ghost" onclick={() => pitch.portamento()} title="Slide in from the previous note">
+			<button
+				class="btn ghost"
+				onclick={() => pitch.portamento()}
+				title="Slide in from the previous note"
+			>
 				Portamento
 			</button>
-			<button class="btn ghost" onclick={() => pitch.vibrato(true)} title="Add vibrato">Vibrato</button>
-			<button class="icon-btn" title="Clear pitch curve" onclick={pitch.clear}><Icon name="eraser" /></button>
+			<button class="btn ghost" onclick={() => pitch.vibrato(true)} title="Add vibrato"
+				>Vibrato</button
+			>
+			<button class="icon-btn" title="Clear pitch curve" onclick={pitch.clear}
+				><Icon name="eraser" /></button
+			>
 		{:else}
 			{#if single}
-				<button class="icon-btn" title="Edit lyric (Enter)" onclick={() => (ui.requestLyricEdit = single.id)}>
+				<button
+					class="icon-btn"
+					title="Edit lyric (Enter)"
+					onclick={() => (ui.requestLyricEdit = single.id)}
+				>
 					<Icon name="text" />
 				</button>
 			{/if}
@@ -105,10 +122,10 @@
 		align-items: center;
 		gap: 2px;
 		padding: 4px;
-		background: color-mix(in srgb, var(--panel) 92%, transparent);
-		backdrop-filter: blur(10px);
-		border: 1px solid var(--border);
-		border-radius: 12px;
+		background: color-mix(in srgb, var(--panel) 90%, transparent);
+		backdrop-filter: blur(14px);
+		border: 1px solid var(--border-strong);
+		border-radius: 14px;
 		box-shadow: var(--shadow);
 		max-width: calc(100% - 20px);
 		overflow-x: auto;

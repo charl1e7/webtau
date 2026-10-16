@@ -102,11 +102,17 @@ export async function buildVoicebank(
 	const samples = new Map<string, SampleFile>();
 	for (const wav of wavs) {
 		const key = sampleKey(wav.path);
-		if (!samples.has(key)) samples.set(key, { path: wav.path, key, size: wav.size, read: wav.read });
+		if (!samples.has(key))
+			samples.set(key, { path: wav.path, key, size: wav.size, read: wav.read });
 	}
 
 	const fingerprint = hashString(
-		fingerprintSeed + '|' + [...samples.values()].map((s) => `${s.key}:${s.size}`).sort().join(',')
+		fingerprintSeed +
+			'|' +
+			[...samples.values()]
+				.map((s) => `${s.key}:${s.size}`)
+				.sort()
+				.join(',')
 	);
 
 	return {
@@ -137,7 +143,9 @@ async function entriesFromZip(file: File, status: StatusFn): Promise<Entry[]> {
 		entries.push({
 			path,
 			// Uncompressed size is a good cache discriminator and is stored in the central directory.
-			size: (zipEntry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0,
+			size:
+				(zipEntry as unknown as { _data?: { uncompressedSize?: number } })._data
+					?.uncompressedSize ?? 0,
 			read: () => zipEntry.async('uint8array') as Promise<Uint8Array<ArrayBuffer>>,
 			blob: () => zipEntry.async('blob')
 		});
@@ -170,11 +178,17 @@ async function filesFromDirectory(dir: FileSystemDirectoryEntry, prefix = ''): P
 	const out: File[] = [];
 	for (const entry of await readAllEntries(dir.createReader())) {
 		if (entry.isFile) {
-			const file = await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej));
-			Object.defineProperty(file, 'webkitRelativePath', { value: `${prefix}${dir.name}/${file.name}` });
+			const file = await new Promise<File>((res, rej) =>
+				(entry as FileSystemFileEntry).file(res, rej)
+			);
+			Object.defineProperty(file, 'webkitRelativePath', {
+				value: `${prefix}${dir.name}/${file.name}`
+			});
 			out.push(file);
 		} else if (entry.isDirectory) {
-			out.push(...(await filesFromDirectory(entry as FileSystemDirectoryEntry, `${prefix}${dir.name}/`)));
+			out.push(
+				...(await filesFromDirectory(entry as FileSystemDirectoryEntry, `${prefix}${dir.name}/`))
+			);
 		}
 	}
 	return out;
@@ -201,7 +215,9 @@ export async function loadFromFileList(files: File[], status: StatusFn): Promise
  */
 export async function loadFromEntry(entry: FileSystemEntry, status: StatusFn): Promise<Voicebank> {
 	if (entry.isFile) {
-		const file = await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej));
+		const file = await new Promise<File>((res, rej) =>
+			(entry as FileSystemFileEntry).file(res, rej)
+		);
 		return loadFromFileList([file], status);
 	}
 	status(`Reading folder “${entry.name}”…`);

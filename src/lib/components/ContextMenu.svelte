@@ -7,8 +7,12 @@
 	let el = $state<HTMLDivElement>();
 	let pos = $state({ left: 0, top: 0 });
 
+	// A finger that opened the menu with a long-press is still lifting; its
+	// synthesized click must not activate the item underneath.
+	let openedAt = 0;
 	$effect(() => {
 		stack = menu ? [{ title: '', items: menu.items }] : [];
+		openedAt = performance.now();
 	});
 
 	const current = $derived(stack[stack.length - 1]);
@@ -16,7 +20,7 @@
 	// Keep the menu inside the window.
 	$effect(() => {
 		if (!menu || !el || ui.compact) return;
-		current;
+		void current;
 		const w = el.offsetWidth;
 		const h = el.offsetHeight;
 		pos = {
@@ -26,7 +30,7 @@
 	});
 
 	function pick(item: MenuItem) {
-		if (item.disabled) return;
+		if (item.disabled || performance.now() - openedAt < 400) return;
 		if (item.children) {
 			stack = [...stack, { title: item.label ?? '', items: item.children }];
 			return;
@@ -48,7 +52,13 @@
 <svelte:window onkeydown={key} />
 
 {#if menu}
-	<div class="backdrop" class:compact={ui.compact} role="presentation" onpointerdown={ui.closeMenu} oncontextmenu={(e) => { e.preventDefault(); ui.closeMenu(); }}></div>
+	<div
+		class="backdrop"
+		class:compact={ui.compact}
+		role="presentation"
+		onpointerdown={ui.closeMenu}
+		oncontextmenu={(e) => e.preventDefault()}
+	></div>
 	<div
 		bind:this={el}
 		class="menu"
@@ -73,7 +83,9 @@
 					disabled={item.disabled}
 					onclick={() => pick(item)}
 				>
-					<span class="icon">{#if item.icon}<Icon name={item.icon as IconName} size={17} />{/if}</span>
+					<span class="icon"
+						>{#if item.icon}<Icon name={item.icon as IconName} size={17} />{/if}</span
+					>
 					<span class="label">{item.label}</span>
 					{#if item.hint && !ui.compact}<span class="hint">{item.hint}</span>{/if}
 					{#if item.children}<Icon name="chevronRight" size={16} />{/if}
@@ -100,9 +112,10 @@
 		max-height: calc(100vh - 16px);
 		overflow-y: auto;
 		padding: 5px;
-		background: var(--panel);
-		border: 1px solid var(--border);
-		border-radius: 12px;
+		background: color-mix(in srgb, var(--panel) 94%, transparent);
+		backdrop-filter: blur(14px);
+		border: 1px solid var(--border-strong);
+		border-radius: 14px;
 		box-shadow: var(--shadow);
 		animation: pop 0.1s ease-out;
 	}
@@ -113,7 +126,7 @@
 		top: auto;
 		max-width: none;
 		max-height: 72vh;
-		border-radius: 18px 18px 0 0;
+		border-radius: 20px 20px 0 0;
 		padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
 		animation: rise 0.18s ease-out;
 	}
@@ -133,7 +146,7 @@
 	}
 	.item:hover:not(:disabled),
 	.item:focus-visible {
-		background: var(--panel-3);
+		background: linear-gradient(90deg, rgba(255, 61, 143, 0.2), rgba(255, 61, 143, 0.05));
 	}
 	.item.danger {
 		color: var(--danger);

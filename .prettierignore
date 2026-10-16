@@ -4,3 +4,13 @@ pnpm-lock.yaml
 yarn.lock
 bun.lock
 bun.lockb
+
+# generated / vendored
+/src/lib/engine/wasm/w-synth.js
+/crates
+/Cargo.lock
+/package-lock.json
+/build
+/.svelte-kit
+/target
+/static

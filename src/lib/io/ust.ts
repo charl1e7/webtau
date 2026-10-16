@@ -1,4 +1,11 @@
-import { PPQ, type Note, type PitchPoint, type PitchShape, type TempoChange, type Vibrato } from '#lib/core/types';
+import {
+	PPQ,
+	type Note,
+	type PitchPoint,
+	type PitchShape,
+	type TempoChange,
+	type Vibrato
+} from '#lib/core/types';
 import { createNote, createPitchPoint } from '#lib/core/music';
 import { trimOverlaps, sortNotes } from '#lib/core/ops';
 import { decodeText } from './text';
@@ -199,7 +206,13 @@ export function serializeUst(
 
 	for (const n of notes) {
 		if (n.tick > cursor) {
-			emit([`Length=${n.tick - cursor}`, 'Lyric=R', 'NoteNum=60', ...tempoLines(cursor, n.tick), 'PreUtterance='] );
+			emit([
+				`Length=${n.tick - cursor}`,
+				'Lyric=R',
+				'NoteNum=60',
+				...tempoLines(cursor, n.tick),
+				'PreUtterance='
+			]);
 		}
 		const lines = [
 			`Length=${n.length}`,
@@ -215,13 +228,25 @@ export function serializeUst(
 		if (n.pitchPoints.length) {
 			const pts = [...n.pitchPoints].sort((a, b) => a.x - b.x);
 			lines.push(`PBS=${fmt(pts[0].x)};${fmt(pts[0].y / 10)}`);
-			lines.push(`PBW=${pts.slice(1).map((p, i) => fmt(p.x - pts[i].x)).join(',')}`);
-			lines.push(`PBY=${pts.slice(1).map((p) => fmt(p.y / 10)).join(',')}`);
+			lines.push(
+				`PBW=${pts
+					.slice(1)
+					.map((p, i) => fmt(p.x - pts[i].x))
+					.join(',')}`
+			);
+			lines.push(
+				`PBY=${pts
+					.slice(1)
+					.map((p) => fmt(p.y / 10))
+					.join(',')}`
+			);
 			lines.push(`PBM=${pts.map((p) => shapeCode(p.shape)).join(',')}`);
 		}
 		if (n.vibrato) {
 			const v = n.vibrato;
-			lines.push(`VBR=${[v.length, v.period, v.depth, v.fadeIn, v.fadeOut, v.phase, 0, 0].map(fmt).join(',')}`);
+			lines.push(
+				`VBR=${[v.length, v.period, v.depth, v.fadeIn, v.fadeOut, v.phase, 0, 0].map(fmt).join(',')}`
+			);
 		}
 		emit(lines);
 		cursor = n.tick + n.length;

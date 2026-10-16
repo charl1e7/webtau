@@ -3,7 +3,13 @@ import { History } from '#lib/core/history';
 import { TempoMap } from '#lib/core/tempo';
 import { cloneNote, createNote } from '#lib/core/music';
 import { pasteNotes, sortNotes } from '#lib/core/ops';
-import { PPQ, type Note, type ProjectData, type TempoChange, type TimeSignature } from '#lib/core/types';
+import {
+	PPQ,
+	type Note,
+	type ProjectData,
+	type TempoChange,
+	type TimeSignature
+} from '#lib/core/types';
 
 interface Snapshot {
 	notes: Note[];
@@ -266,7 +272,10 @@ export class ProjectState {
 		clearTimeout(this.saveTimer);
 		this.saveTimer = setTimeout(() => {
 			try {
-				localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ ...this.toData(), savedAt: Date.now() }));
+				localStorage.setItem(
+					AUTOSAVE_KEY,
+					JSON.stringify({ ...this.toData(), savedAt: Date.now() })
+				);
 			} catch {
 				/* storage full or unavailable */
 			}

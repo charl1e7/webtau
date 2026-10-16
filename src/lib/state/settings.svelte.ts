@@ -30,7 +30,7 @@ const DEFAULTS: SettingsData = {
 	backgroundAnalysis: true,
 	showNoteNames: true,
 	touchMode: 'auto',
-	theme: 'auto'
+	theme: 'dark'
 };
 
 const STORAGE_KEY = 'webtau:settings';

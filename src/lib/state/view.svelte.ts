@@ -10,9 +10,11 @@ export const MAX_KEY_HEIGHT = 44;
 class ViewState {
 	tool = $state<Tool>('select');
 	/** Horizontal zoom: CSS pixels per tick. */
-	pxPerTick = $state(0.14);
+	pxPerTick = $state(0.2);
 	/** Vertical zoom: CSS pixels per semitone row. */
-	keyHeight = $state(22);
+	keyHeight = $state(
+		typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 28 : 22
+	);
 
 	setTool(tool: Tool) {
 		this.tool = tool;

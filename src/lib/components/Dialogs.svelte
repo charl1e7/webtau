@@ -51,7 +51,11 @@
 	const hasTempoHere = $derived(tempoTick > 0 && project.tempos.some((t) => t.tick === tempoTick));
 	function applyTempo() {
 		if (Number.isFinite(bpmInput) && bpmInput > 0) project.setTempo(bpmInput, tempoTick);
-		if (tempoTick === 0 && (numerator !== project.timeSignature.numerator || denominator !== project.timeSignature.denominator)) {
+		if (
+			tempoTick === 0 &&
+			(numerator !== project.timeSignature.numerator ||
+				denominator !== project.timeSignature.denominator)
+		) {
 			project.setTimeSignature(numerator, denominator);
 		}
 		ui.closeDialog();
@@ -91,7 +95,12 @@
 		<h3>Editor</h3>
 		<div class="field">
 			<label for="s-lyric">Default lyric for new notes</label>
-			<input id="s-lyric" type="text" bind:value={settings.data.defaultLyric} autocapitalize="off" />
+			<input
+				id="s-lyric"
+				type="text"
+				bind:value={settings.data.defaultLyric}
+				autocapitalize="off"
+			/>
 		</div>
 		<div class="field">
 			<label for="s-play">Play from</label>
@@ -100,8 +109,12 @@
 				<option value="start">Start of the song</option>
 			</select>
 		</div>
-		<label class="check"><input type="checkbox" bind:checked={settings.data.followPlayhead} /> Follow playhead while playing</label>
-		<label class="check"><input type="checkbox" bind:checked={settings.data.showNoteNames} /> Show note names on long notes</label>
+		<label class="check"
+			><input type="checkbox" bind:checked={settings.data.followPlayhead} /> Follow playhead while playing</label
+		>
+		<label class="check"
+			><input type="checkbox" bind:checked={settings.data.showNoteNames} /> Show note names on long notes</label
+		>
 
 		<h3>Appearance</h3>
 		<div class="field">
@@ -132,7 +145,13 @@
 		</div>
 		<div class="field">
 			<label for="s-workers">Parallel workers (0 = automatic: {settings.workerCount})</label>
-			<input id="s-workers" type="number" min="0" max="16" bind:value={settings.data.analysisWorkers} />
+			<input
+				id="s-workers"
+				type="number"
+				min="0"
+				max="16"
+				bind:value={settings.data.analysisWorkers}
+			/>
 		</div>
 		<label class="check">
 			<input type="checkbox" bind:checked={settings.data.backgroundAnalysis} />
@@ -152,11 +171,16 @@
 	<Dialog title="Fill lyrics" onclose={ui.closeDialog}>
 		<div class="field">
 			<label for="l-text">Lyrics</label>
-			<textarea id="l-text" rows="6" bind:value={lyricsText} placeholder="la la la — or kana: さくらさく" autocapitalize="off"></textarea>
+			<textarea
+				id="l-text"
+				rows="6"
+				bind:value={lyricsText}
+				placeholder="la la la — or kana: さくらさく"
+				autocapitalize="off"></textarea>
 			<span class="hint">
 				Separate syllables with spaces; Japanese kana is split automatically.
-				{syllables.length} syllable(s) → {lyricTargets} {project.selection.size ? 'selected' : ''} note(s).
-				Notes are filled in time order.
+				{syllables.length} syllable(s) → {lyricTargets}
+				{project.selection.size ? 'selected' : ''} note(s). Notes are filled in time order.
 			</span>
 		</div>
 		{#snippet footer()}
@@ -167,11 +191,16 @@
 				onclick={() => {
 					edit.applyLyrics(lyricsText);
 					ui.closeDialog();
-				}}>Apply</button>
+				}}>Apply</button
+			>
 		{/snippet}
 	</Dialog>
 {:else if ui.dialog === 'tempo'}
-	<Dialog title={tempoTick > 0 ? 'Tempo change' : 'Tempo & time signature'} onclose={ui.closeDialog} width={380}>
+	<Dialog
+		title={tempoTick > 0 ? 'Tempo change' : 'Tempo & time signature'}
+		onclose={ui.closeDialog}
+		width={380}
+	>
 		<div class="field">
 			<label for="t-bpm">Tempo (BPM){tempoTick > 0 ? ` from tick ${tempoTick}` : ''}</label>
 			<input id="t-bpm" type="number" min="20" max="400" step="0.1" bind:value={bpmInput} />
@@ -195,7 +224,8 @@
 					onclick={() => {
 						project.removeTempo(tempoTick);
 						ui.closeDialog();
-					}}>Remove</button>
+					}}>Remove</button
+				>
 			{/if}
 			<button class="btn" onclick={ui.closeDialog}>Cancel</button>
 			<button class="btn primary" onclick={applyTempo}>Apply</button>
@@ -237,12 +267,21 @@
 				locally in your browser — no uploads.
 			</p>
 			<p class="hint">
-				Engine based on <a href="https://github.com/UtaUtaUtau/straycat-rs" target="_blank" rel="noreferrer">straycat-rs</a>,
-				<a href="https://github.com/BiggieBoo18/Rust-WORLD" target="_blank" rel="noreferrer">Rust-WORLD</a> and the
+				Engine based on <a
+					href="https://github.com/UtaUtaUtau/straycat-rs"
+					target="_blank"
+					rel="noreferrer">straycat-rs</a
+				>,
+				<a href="https://github.com/BiggieBoo18/Rust-WORLD" target="_blank" rel="noreferrer"
+					>Rust-WORLD</a
+				>
+				and the
 				<a href="https://github.com/mmorise/World" target="_blank" rel="noreferrer">WORLD</a> vocoder.
 			</p>
 			<p>
-				<a href="https://github.com/charl1e7/webtau" target="_blank" rel="noreferrer">github.com/charl1e7/webtau</a>
+				<a href="https://github.com/charl1e7/webtau" target="_blank" rel="noreferrer"
+					>github.com/charl1e7/webtau</a
+				>
 				{#if voicebank.current}· voicebank: {voicebank.current.name}{/if}
 			</p>
 		</div>

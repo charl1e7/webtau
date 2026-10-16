@@ -1,4 +1,11 @@
-import { clamp, cloneNote, createNote, createPitchPoint, gridTicks, noteEnd } from '#lib/core/music';
+import {
+	clamp,
+	cloneNote,
+	createNote,
+	createPitchPoint,
+	gridTicks,
+	noteEnd
+} from '#lib/core/music';
 import { moveNotes, notesInRange } from '#lib/core/ops';
 import { MAX_PITCH, MIN_NOTE_TICKS, MIN_PITCH, type Note } from '#lib/core/types';
 import { emptyMenu, noteMenu, rulerMenu } from '#lib/state/menus';
@@ -6,7 +13,13 @@ import { playback } from '#lib/state/playback.svelte';
 import { project } from '#lib/state/project.svelte';
 import { settings } from '#lib/state/settings.svelte';
 import { ui } from '#lib/state/ui.svelte';
-import { MAX_KEY_HEIGHT, MAX_PX_PER_TICK, MIN_KEY_HEIGHT, MIN_PX_PER_TICK, view } from '#lib/state/view.svelte';
+import {
+	MAX_KEY_HEIGHT,
+	MAX_PX_PER_TICK,
+	MIN_KEY_HEIGHT,
+	MIN_PX_PER_TICK,
+	view
+} from '#lib/state/view.svelte';
 import type { Rect } from './draw';
 
 export const RULER_H = 30;
@@ -22,8 +35,22 @@ interface Pointer {
 }
 
 type Gesture =
-	| { kind: 'move'; ids: ReadonlySet<string>; origin: Note[]; grabId: string; grabTick: number; grabPitch: number; moved: boolean }
-	| { kind: 'resize'; edge: 'start' | 'end'; ids: ReadonlySet<string>; origin: Note[]; grabId: string }
+	| {
+			kind: 'move';
+			ids: ReadonlySet<string>;
+			origin: Note[];
+			grabId: string;
+			grabTick: number;
+			grabPitch: number;
+			moved: boolean;
+	  }
+	| {
+			kind: 'resize';
+			edge: 'start' | 'end';
+			ids: ReadonlySet<string>;
+			origin: Note[];
+			grabId: string;
+	  }
 	| { kind: 'draw'; id: string; tick0: number }
 	| { kind: 'erase'; erased: Set<string> }
 	| { kind: 'rubber'; base: ReadonlySet<string> }
@@ -65,7 +92,12 @@ export class RollController {
 	private lastTap = { time: 0, x: 0, y: 0 };
 	private inertia = 0;
 	private autoScrollTimer: ReturnType<typeof setInterval> | undefined;
-	private lastMove: { x: number; y: number; shift: boolean; alt: boolean } = { x: 0, y: 0, shift: false, alt: false };
+	private lastMove: { x: number; y: number; shift: boolean; alt: boolean } = {
+		x: 0,
+		y: 0,
+		shift: false,
+		alt: false
+	};
 
 	// ---- geometry ---------------------------------------------------------------
 
@@ -78,8 +110,8 @@ export class RollController {
 
 	tickAtX = (x: number) => (x - this.keysW + this.scrollX) / this.ppt;
 	xAtTick = (tick: number) => this.keysW - this.scrollX + tick * this.ppt;
-	/** Fractional row coordinate; floor() gives the pitch row. */
-	pitchAtY = (y: number) => MAX_PITCH - (y - RULER_H + this.scrollY) / this.keyH;
+	/** Fractional row coordinate: row `p` spans [p, p + 1), so floor() gives the pitch. */
+	pitchAtY = (y: number) => MAX_PITCH + 1 - (y - RULER_H + this.scrollY) / this.keyH;
 	rowTop = (pitch: number) => RULER_H - this.scrollY + (MAX_PITCH - pitch) * this.keyH;
 	snapStep = () => gridTicks(settings.data.gridDivision);
 
@@ -107,7 +139,10 @@ export class RollController {
 	}
 
 	centerOnPitch(pitch: number) {
-		this.setScroll(this.scrollX, (MAX_PITCH - pitch) * this.keyH - (this.height - RULER_H) / 2 + this.keyH / 2);
+		this.setScroll(
+			this.scrollX,
+			(MAX_PITCH - pitch) * this.keyH - (this.height - RULER_H) / 2 + this.keyH / 2
+		);
 	}
 
 	/** Brings the whole song into view (used after loading a project). */
@@ -137,7 +172,7 @@ export class RollController {
 		view.keyHeight = clamp(view.keyHeight * fy, MIN_KEY_HEIGHT, MAX_KEY_HEIGHT);
 		this.setScroll(
 			tick * this.ppt - (px - this.keysW),
-			(MAX_PITCH - row) * this.keyH - (py - RULER_H)
+			(MAX_PITCH + 1 - row) * this.keyH - (py - RULER_H)
 		);
 	}
 
@@ -182,7 +217,8 @@ export class RollController {
 	private snap(tick: number, free: boolean, mode: 'nearest' | 'floor' = 'nearest'): number {
 		if (free || !settings.data.snap) return Math.round(tick);
 		const step = this.snapStep();
-		return (mode === 'floor' ? Math.floor(tick / step) : Math.round(tick / step)) * step;
+		// The epsilon keeps a pointer exactly on a grid line from rounding down a cell.
+		return (mode === 'floor' ? Math.floor(tick / step + 1e-6) : Math.round(tick / step)) * step;
 	}
 
 	// ---- pointer events ----------------------------------------------------------------
@@ -195,11 +231,18 @@ export class RollController {
 	onPointerDown = (e: PointerEvent) => {
 		if (!this.canvas) return;
 		ui.closeMenu();
+		const active = document.activeElement;
+		if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur();
 		this.canvas.setPointerCapture(e.pointerId);
+		// A primary pointerdown means no other finger is down: forget any pointer
+		// whose up/cancel event was lost, or it would be mistaken for a pinch.
+		if (e.isPrimary) this.pointers.clear();
 		const p = this.local(e);
 		this.pointers.set(e.pointerId, { ...p, type: e.pointerType });
 		this.inertia++;
 		this.lastMove = { ...p, shift: e.shiftKey, alt: e.altKey };
+		this.moved = false;
+		this.downAt = p;
 
 		if (this.pointers.size === 2 && e.pointerType === 'touch') {
 			this.cancelGesture();
@@ -214,7 +257,11 @@ export class RollController {
 		if (p.y < RULER_H && p.x >= this.keysW) {
 			if (e.button === 2) {
 				e.preventDefault();
-				ui.openMenu({ x: e.clientX, y: e.clientY, items: rulerMenu(Math.max(0, Math.round(this.tickAtX(p.x)))) });
+				ui.openMenu({
+					x: e.clientX,
+					y: e.clientY,
+					items: rulerMenu(Math.max(0, Math.round(this.tickAtX(p.x))))
+				});
 				return;
 			}
 			this.gesture = { kind: 'seek' };
@@ -273,6 +320,9 @@ export class RollController {
 			return;
 		}
 		if (this.pointers.size > 1) return;
+		if (!this.moved && Math.hypot(p.x - this.downAt.x, p.y - this.downAt.y) > (ui.touch ? 10 : 5)) {
+			this.moved = true;
+		}
 		this.applyMove(p, e.shiftKey, e.altKey);
 		this.updateAutoScroll(p);
 	};
@@ -354,6 +404,9 @@ export class RollController {
 	// ---- gesture setup ---------------------------------------------------------------------
 
 	private isDoubleTapPending = false;
+	/** Whether the pointer travelled beyond the touch slop since it went down. */
+	private moved = false;
+	private downAt = { x: 0, y: 0 };
 
 	private registerTap(e: PointerEvent, p: { x: number; y: number }): boolean {
 		const now = performance.now();
@@ -371,12 +424,13 @@ export class RollController {
 		this.longPress = setTimeout(() => {
 			const g = this.gesture;
 			if (!g) return;
-			const stillDown = [...this.pointers.values()].some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 10);
+			const stillDown = [...this.pointers.values()].some(
+				(q) => Math.hypot(q.x - p.x, q.y - p.y) < 10
+			);
 			if (!stillDown) return;
-			if (g.kind === 'move' && g.moved) return;
-			if (g.kind === 'resize' || g.kind === 'pan') return;
+			if (this.moved || g.kind === 'pan') return;
 			// Abort whatever tentative edit has started and show the menu instead.
-			if (g.kind === 'draw') project.cancelGesture();
+			if (['move', 'resize', 'draw', 'point'].includes(g.kind)) project.cancelGesture();
 			this.gesture = null;
 			navigator.vibrate?.(12);
 			this.openContextMenu(e.clientX, e.clientY, p, note);
@@ -394,9 +448,14 @@ export class RollController {
 		}
 	}
 
-	private downNote(e: PointerEvent, p: { x: number; y: number }, hit: { note: Note; zone: Zone }, isDouble: boolean) {
+	private downNote(
+		e: PointerEvent,
+		p: { x: number; y: number },
+		hit: { note: Note; zone: Zone },
+		isDouble: boolean
+	) {
 		const { note, zone } = hit;
-		if (isDouble && zone === 'body') {
+		if (isDouble) {
 			project.select([note.id]);
 			this.editingLyricId = note.id;
 			return;
@@ -504,7 +563,12 @@ export class RollController {
 		}
 	}
 
-	private downPitch(e: PointerEvent, p: { x: number; y: number }, hit: Note | null, isDouble: boolean) {
+	private downPitch(
+		e: PointerEvent,
+		p: { x: number; y: number },
+		hit: Note | null,
+		isDouble: boolean
+	) {
 		const point = this.pointAt(p);
 		if (point) {
 			if (isDouble || e.button === 2) {
@@ -520,12 +584,17 @@ export class RollController {
 		// Add a point on a selected note under (or near) the pointer.
 		const target = this.noteForNewPoint(p, hit);
 		if (target) {
-			const offsetMs = project.tempoMap.tickToMs(this.tickAtX(p.x)) - project.tempoMap.tickToMs(target.tick);
+			const offsetMs =
+				project.tempoMap.tickToMs(this.tickAtX(p.x)) - project.tempoMap.tickToMs(target.tick);
 			const cents = this.centsAt(target, p.y);
 			const pt = createPitchPoint(Math.round(offsetMs), cents, 'l');
 			project.beginGesture();
 			project.preview((notes) =>
-				notes.map((n) => (n.id === target.id ? { ...n, pitchPoints: [...n.pitchPoints, pt].sort((a, b) => a.x - b.x) } : n))
+				notes.map((n) =>
+					n.id === target.id
+						? { ...n, pitchPoints: [...n.pitchPoints, pt].sort((a, b) => a.x - b.x) }
+						: n
+				)
 			);
 			this.selectedPoint = { noteId: target.id, pointId: pt.id };
 			this.gesture = { kind: 'point', noteId: target.id, pointId: pt.id, origin: project.notes };
@@ -547,7 +616,9 @@ export class RollController {
 	private noteForNewPoint(p: { x: number; y: number }, hit: Note | null): Note | null {
 		const tick = this.tickAtX(p.x);
 		const margin = 40 / this.ppt;
-		const candidates = project.selectedNotes.filter((n) => tick >= n.tick - margin && tick <= noteEnd(n) + margin);
+		const candidates = project.selectedNotes.filter(
+			(n) => tick >= n.tick - margin && tick <= noteEnd(n) + margin
+		);
 		if (hit && project.selection.has(hit.id)) return hit;
 		// Prefer the note whose vertical neighbourhood is closest.
 		let best: Note | null = null;
@@ -590,7 +661,9 @@ export class RollController {
 
 	deletePoint(noteId: string, pointId: string) {
 		project.edit((notes) =>
-			notes.map((n) => (n.id === noteId ? { ...n, pitchPoints: n.pitchPoints.filter((q) => q.id !== pointId) } : n))
+			notes.map((n) =>
+				n.id === noteId ? { ...n, pitchPoints: n.pitchPoints.filter((q) => q.id !== pointId) } : n
+			)
 		);
 		if (this.selectedPoint?.pointId === pointId) this.selectedPoint = null;
 	}
@@ -667,7 +740,11 @@ export class RollController {
 					project.preview(() =>
 						g.origin.map((n) =>
 							g.ids.has(n.id)
-								? { ...n, tick: Math.max(0, n.tick + delta), length: Math.max(MIN_NOTE_TICKS, n.length - delta) }
+								? {
+										...n,
+										tick: Math.max(0, n.tick + delta),
+										length: Math.max(MIN_NOTE_TICKS, n.length - delta)
+									}
 								: n
 						)
 					);
@@ -719,7 +796,8 @@ export class RollController {
 	private updateCursor(p: { x: number; y: number }, hit = this.hitTest(p.x, p.y)) {
 		const g = this.gesture;
 		if (g?.kind === 'pan') this.cursor = 'grabbing';
-		else if (g?.kind === 'resize' || (hit && hit.zone !== 'body' && view.tool !== 'pitch')) this.cursor = 'ew-resize';
+		else if (g?.kind === 'resize' || (hit && hit.zone !== 'body' && view.tool !== 'pitch'))
+			this.cursor = 'ew-resize';
 		else if (g?.kind === 'move') this.cursor = 'grabbing';
 		else if (p.y < RULER_H && p.x >= this.keysW) this.cursor = 'pointer';
 		else if (view.tool === 'erase') this.cursor = hit ? 'not-allowed' : 'default';
@@ -772,7 +850,7 @@ export class RollController {
 		view.keyHeight = clamp(Math.round(g.startKey * fy), MIN_KEY_HEIGHT, MAX_KEY_HEIGHT);
 		this.setScroll(
 			g.anchorTick * this.ppt - (cx - this.keysW),
-			(MAX_PITCH - g.anchorRow) * this.keyH - (cy - RULER_H)
+			(MAX_PITCH + 1 - g.anchorRow) * this.keyH - (cy - RULER_H)
 		);
 	}
 
@@ -825,7 +903,6 @@ export class RollController {
 		this.autoScrollTimer = undefined;
 	}
 }
-
 
 /** Gives code outside the piano roll (shortcuts, toolbar) access to the active controller. */
 export const rollHandle: { current: RollController | null } = { current: null };

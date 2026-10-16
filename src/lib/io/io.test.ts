@@ -61,7 +61,10 @@ describe('UST', () => {
 
 	it('round-trips through serialize', () => {
 		const ust = parseUst(SAMPLE_UST);
-		const { text } = serializeUst(ust.notes, ust.tempos, { name: ust.name, voicebank: ust.voicebank });
+		const { text } = serializeUst(ust.notes, ust.tempos, {
+			name: ust.name,
+			voicebank: ust.voicebank
+		});
 		const again = parseUst(text);
 		expect(again.tempos).toEqual(ust.tempos);
 		expect(again.notes.map((n) => [n.tick, n.length, n.pitch, n.lyric, n.volume])).toEqual(
@@ -75,7 +78,10 @@ describe('UST', () => {
 	it('fills gaps with rests and warns about overlaps', () => {
 		const a = createNote({ tick: 480, length: 600, pitch: 60 });
 		const b = createNote({ tick: 960, length: 480, pitch: 62 });
-		const { text, warnings } = serializeUst([a, b], [{ tick: 0, bpm: 120 }], { name: 'x', voicebank: '' });
+		const { text, warnings } = serializeUst([a, b], [{ tick: 0, bpm: 120 }], {
+			name: 'x',
+			voicebank: ''
+		});
 		const back = parseUst(text);
 		expect(back.notes.map((n) => [n.tick, n.length, n.lyric])).toEqual([
 			[0, 480, 'R'],
@@ -87,7 +93,9 @@ describe('UST', () => {
 
 	it('reads Shift-JIS encoded lyrics', () => {
 		// "あ" in Shift-JIS is 0x82 0xA0
-		const head = new TextEncoder().encode('[#SETTING]\nTempo=120\n[#0000]\nLength=480\nNoteNum=60\nLyric=');
+		const head = new TextEncoder().encode(
+			'[#SETTING]\nTempo=120\n[#0000]\nLength=480\nNoteNum=60\nLyric='
+		);
 		const tail = new TextEncoder().encode('\n[#TRACKEND]\n');
 		const bytes = new Uint8Array([...head, 0x82, 0xa0, ...tail]);
 		expect(parseUst(bytes).notes[0].lyric).toBe('あ');
@@ -117,7 +125,12 @@ describe('MIDI', () => {
 
 describe('project file', () => {
 	it('round-trips', () => {
-		const n = createNote({ tick: 10, length: 100, pitch: 61, pitchPoints: [createPitchPoint(0, 50, 's')] });
+		const n = createNote({
+			tick: 10,
+			length: 100,
+			pitch: 61,
+			pitchPoints: [createPitchPoint(0, 50, 's')]
+		});
 		const text = serializeProject({
 			name: 'p',
 			notes: [n],

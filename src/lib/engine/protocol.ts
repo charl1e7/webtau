@@ -32,5 +32,4 @@ export type AnalyzerRequest =
 	| { type: 'analyze'; id: number; wav: Uint8Array; mode: AnalysisMode };
 
 export type AnalyzerReply =
-	| { type: 'ready' }
-	| { type: 'result'; id: number; features: Uint8Array | null; error?: string };
+	{ type: 'ready' } | { type: 'result'; id: number; features: Uint8Array | null; error?: string };

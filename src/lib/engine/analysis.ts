@@ -231,7 +231,10 @@ export class AnalysisScheduler {
 			};
 			worker.addEventListener('message', onReady);
 		});
-		worker.postMessage({ type: 'init', module: this.module ?? undefined } satisfies AnalyzerRequest);
+		worker.postMessage({
+			type: 'init',
+			module: this.module ?? undefined
+		} satisfies AnalyzerRequest);
 		this.pool.push(entry);
 		return entry;
 	}

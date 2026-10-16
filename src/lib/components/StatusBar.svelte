@@ -31,8 +31,6 @@
 		padding: 0 12px;
 		font-size: 12px;
 		color: var(--muted);
-		background: var(--panel);
-		border-top: 1px solid var(--border);
 		flex: none;
 		white-space: nowrap;
 	}
@@ -46,6 +44,7 @@
 	.chip {
 		padding: 1px 8px;
 		border-radius: 999px;
-		background: var(--panel-3);
+		background: var(--panel);
+		border: 1px solid var(--border);
 	}
 </style>

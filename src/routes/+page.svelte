@@ -26,9 +26,12 @@
 		preloadEngine();
 		// Handy for debugging and automated tests: open the app with ?debug.
 		if (new URLSearchParams(location.search).has('debug')) {
-			Object.assign(window, { webtau: { project, playback, voicebank, ui, view, settings, roll: rollHandle } });
+			Object.assign(window, {
+				webtau: { project, playback, voicebank, ui, view, settings, roll: rollHandle }
+			});
 		}
-		if (!new URLSearchParams(location.search).has('fresh') && project.restoreAutosave()) ui.toast('Restored your last session.');
+		if (!new URLSearchParams(location.search).has('fresh') && project.restoreAutosave())
+			ui.toast('Restored your last session.');
 	});
 
 	// Push engine-related settings to the running engine.
@@ -120,7 +123,7 @@
 				e.preventDefault();
 				const dir = e.key === 'ArrowLeft' ? -1 : 1;
 				if (e.altKey) edit.adjustLength(dir);
-				else if (selected) edit.nudge(dir * (480 * 4) / settings.data.gridDivision);
+				else if (selected) edit.nudge((dir * (480 * 4)) / settings.data.gridDivision);
 				else rollHandle.current?.scrollBy(dir * 120, 0);
 				return;
 			}
@@ -195,10 +198,10 @@
 
 	<div class="body">
 		{#if !ui.compact && ui.leftOpen}
-			<aside class="side left" aria-label="Voicebank"><VoicebankPanel /></aside>
+			<aside class="side card left" aria-label="Voicebank"><VoicebankPanel /></aside>
 		{/if}
 
-		<main class="center">
+		<main class="center card">
 			{#if !ui.compact}
 				<ToolBar zoom={(fx, fy) => rollHandle.current?.zoomCenter(fx, fy)} />
 			{/if}
@@ -209,7 +212,7 @@
 		</main>
 
 		{#if !ui.compact && ui.rightOpen}
-			<aside class="side right" aria-label="Properties"><Inspector /></aside>
+			<aside class="side card right" aria-label="Properties"><Inspector /></aside>
 		{/if}
 	</div>
 
@@ -237,12 +240,21 @@
 		height: 100dvh;
 		display: flex;
 		flex-direction: column;
-		background: var(--bg);
+		padding: 12px 12px 6px;
+		gap: 12px;
+	}
+	.app.compact {
+		padding: 6px 6px 0;
+		gap: 6px;
 	}
 	.body {
 		flex: 1;
 		min-height: 0;
 		display: flex;
+		gap: 12px;
+	}
+	.compact .body {
+		gap: 6px;
 	}
 	.center {
 		flex: 1;
@@ -252,16 +264,12 @@
 	}
 	.side {
 		flex: none;
-		width: 300px;
+		width: 308px;
 		overflow-y: auto;
-		background: var(--panel);
-	}
-	.side.left {
-		border-right: 1px solid var(--border);
+		overscroll-behavior: contain;
 	}
 	.side.right {
-		border-left: 1px solid var(--border);
-		width: 290px;
+		width: 296px;
 	}
 	.drop {
 		position: fixed;

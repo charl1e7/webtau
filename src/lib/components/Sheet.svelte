@@ -31,7 +31,8 @@
 		position: fixed;
 		inset: 0;
 		z-index: 40;
-		background: rgba(0, 0, 0, 0.45);
+		background: rgba(4, 4, 6, 0.55);
+		backdrop-filter: blur(4px);
 		animation: fade 0.15s ease-out;
 	}
 	.sheet {
@@ -43,9 +44,9 @@
 		max-height: min(78vh, 640px);
 		display: flex;
 		flex-direction: column;
-		background: var(--panel);
-		border-top: 1px solid var(--border);
-		border-radius: 18px 18px 0 0;
+		background: var(--surface);
+		border-top: 1px solid var(--border-strong);
+		border-radius: 20px 20px 0 0;
 		box-shadow: var(--shadow);
 		padding-bottom: env(safe-area-inset-bottom);
 		animation: rise 0.2s ease-out;
@@ -69,7 +70,11 @@
 	}
 	h2 {
 		margin: 0;
-		font-size: 16px;
+		font-size: 12px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.16em;
+		color: var(--accent-2);
 	}
 	.content {
 		overflow-y: auto;

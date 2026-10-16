@@ -15,7 +15,9 @@
 	let index = $state(0);
 	let openedFor: string | null = null;
 
-	const note = $derived(c.editingLyricId ? project.notes.find((n) => n.id === c.editingLyricId) : null);
+	const note = $derived(
+		c.editingLyricId ? project.notes.find((n) => n.id === c.editingLyricId) : null
+	);
 
 	const matches = $derived.by(() => {
 		const q = text.trim().toLowerCase();
@@ -121,7 +123,7 @@
 			bind:value={text}
 			oninput={() => (index = 0)}
 			onkeydown={key}
-			onblur={() => setTimeout(() => c.editingLyricId && commit(), 120)}
+			onblur={() => c.editingLyricId && commit()}
 			autocomplete="off"
 			autocapitalize="off"
 			spellcheck="false"

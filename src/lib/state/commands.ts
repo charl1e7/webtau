@@ -166,7 +166,12 @@ export const file = {
 		if (name.endsWith('.ust')) {
 			const ust = parseUst(await readBytes(f));
 			if (!confirmDiscard()) return;
-			project.load({ name: ust.name, notes: ust.notes, tempos: ust.tempos, voicebank: ust.voicebank });
+			project.load({
+				name: ust.name,
+				notes: ust.notes,
+				tempos: ust.tempos,
+				voicebank: ust.voicebank
+			});
 			ui.toast(`Imported ${ust.notes.length} notes from UST.`, 'success');
 		} else if (name.endsWith('.mid') || name.endsWith('.midi')) {
 			const midi = parseMidi(await readBytes(f));
@@ -201,7 +206,8 @@ export const edit = {
 	},
 
 	paste: () => {
-		const at = playback.playing || playback.positionMs > 0 ? playback.positionTick : lastSelectedEnd();
+		const at =
+			playback.playing || playback.positionMs > 0 ? playback.positionTick : lastSelectedEnd();
 		if (!project.paste(Math.round(at))) ui.toast('Clipboard is empty.');
 	},
 
@@ -214,7 +220,9 @@ export const edit = {
 	},
 
 	transpose: (semitones: number) => {
-		project.edit((notes) => transposeNotes(notes, targetIds(), semitones), { coalesce: 'transpose' });
+		project.edit((notes) => transposeNotes(notes, targetIds(), semitones), {
+			coalesce: 'transpose'
+		});
 	},
 
 	nudge: (ticks: number) => {
@@ -222,7 +230,9 @@ export const edit = {
 	},
 
 	quantize: () => {
-		project.edit((notes) => quantizeNotes(notes, targetIds(), gridTicks(settings.data.gridDivision)));
+		project.edit((notes) =>
+			quantizeNotes(notes, targetIds(), gridTicks(settings.data.gridDivision))
+		);
 	},
 
 	legato: () => project.edit((notes) => legato(notes, targetIds())),
@@ -261,7 +271,9 @@ export const edit = {
 	setLyric: (id: string, lyric: string) => project.updateNote(id, { lyric }, `lyric:${id}`),
 
 	applyLyrics: (text: string) => {
-		const ids = project.selection.size ? project.selection : new Set(project.notes.map((n) => n.id));
+		const ids = project.selection.size
+			? project.selection
+			: new Set(project.notes.map((n) => n.id));
 		project.edit((notes) => applyLyrics(notes, ids, text));
 	},
 
@@ -279,7 +291,8 @@ export const edit = {
 
 	addRestAfter: () => {
 		const last = project.selectedNotes.at(-1);
-		if (last) project.addNote({ tick: noteEnd(last), pitch: last.pitch, length: last.length, lyric: 'R' });
+		if (last)
+			project.addNote({ tick: noteEnd(last), pitch: last.pitch, length: last.length, lyric: 'R' });
 	}
 };
 
@@ -303,7 +316,10 @@ export const pitch = {
 
 	vibrato: (on: boolean) =>
 		project.edit((notes) =>
-			mapSelected(notes, targetIds(), (n) => ({ ...n, vibrato: on ? { ...DEFAULT_VIBRATO } : null }))
+			mapSelected(notes, targetIds(), (n) => ({
+				...n,
+				vibrato: on ? { ...DEFAULT_VIBRATO } : null
+			}))
 		),
 
 	setVibrato: (patch: Partial<NonNullable<Note['vibrato']>>) =>

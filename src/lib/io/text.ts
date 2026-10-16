@@ -4,7 +4,7 @@
  */
 export function decodeText(bytes: Uint8Array): string {
 	try {
-		return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^﻿/, '');
+		return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, '');
 	} catch {
 		return new TextDecoder('shift-jis').decode(bytes);
 	}
