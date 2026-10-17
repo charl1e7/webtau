@@ -24,6 +24,7 @@ import { parseVsqx } from '#lib/io/vsqx';
 import { createTrack } from '#lib/core/music';
 import { decodeText } from '#lib/io/text';
 import { MIN_NOTE_TICKS, type Note } from '#lib/core/types';
+import { lyrics } from './lyrics.svelte';
 import { playback } from './playback.svelte';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
@@ -53,6 +54,12 @@ export function pickFiles(accept: string, multiple = false): Promise<File[]> {
 }
 
 const readBytes = async (file: File) => new Uint8Array(await file.arrayBuffer());
+
+/** Replaces the project with imported content and points out lyrics the voicebank cannot sing. */
+function loadImported(data: Parameters<typeof project.load>[0]) {
+	project.load(data);
+	lyrics.offerFix();
+}
 
 function confirmDiscard(): boolean {
 	return !project.dirty || project.notes.length === 0 || confirm('Discard unsaved changes?');
@@ -106,7 +113,7 @@ export const file = {
 		const ust = parseUst(await readBytes(f));
 		if (!ust.notes.length) throw new Error('The UST file contains no notes.');
 		playback.stop();
-		project.load({
+		loadImported({
 			name: ust.name || f.name.replace(/\.ust$/i, ''),
 			notes: ust.notes,
 			tempos: ust.tempos,
@@ -130,7 +137,7 @@ export const file = {
 		const ustx = parseUstx(bytes);
 		if (!ustx.notes.length) throw new Error('The USTX file contains no notes.');
 		playback.stop();
-		project.load({
+		loadImported({
 			name: ustx.name || fileName.replace(/\.ustx$/i, ''),
 			notes: ustx.notes,
 			tracks: ustx.tracks,
@@ -197,7 +204,7 @@ export const file = {
 		const lyric = settings.data.defaultLyric || 'a';
 		const notes = track.notes.map((n) => (n.lyric === 'a' ? { ...n, lyric } : n));
 		playback.stop();
-		project.load({ name: fileName.replace(/\.midi?$/i, ''), notes, tempos: midi.tempos });
+		loadImported({ name: fileName.replace(/\.midi?$/i, ''), notes, tempos: midi.tempos });
 		ui.toast(`Imported ${notes.length} notes from “${track.name}”.`, 'success');
 	},
 
@@ -211,7 +218,7 @@ export const file = {
 			t.notes.map((n) => ({ ...n, track: tracks[i].id, lyric: n.lyric === 'a' ? lyric : n.lyric }))
 		);
 		playback.stop();
-		project.load({ name: fileName.replace(/\.midi?$/i, ''), notes, tracks, tempos: midi.tempos });
+		loadImported({ name: fileName.replace(/\.midi?$/i, ''), notes, tracks, tempos: midi.tempos });
 		ui.toast(`Imported ${withNotes.length} tracks, ${notes.length} notes.`, 'success');
 	},
 
@@ -227,7 +234,7 @@ export const file = {
 		const tracks = v.tracks.map((t, i) => createTrack(i, { name: t.name }));
 		const notes = v.tracks.flatMap((t, i) => t.notes.map((n) => ({ ...n, track: tracks[i].id })));
 		playback.stop();
-		project.load({
+		loadImported({
 			name: fileName.replace(/\.vsqx$/i, ''),
 			notes,
 			tracks,
@@ -262,7 +269,7 @@ export const file = {
 		if (name.endsWith('.ust')) {
 			const ust = parseUst(await readBytes(f));
 			if (!confirmDiscard()) return;
-			project.load({
+			loadImported({
 				name: ust.name,
 				notes: ust.notes,
 				tempos: ust.tempos,

@@ -5,6 +5,7 @@ import { getEngine } from './engine';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
 import { ui } from './ui.svelte';
+import { lyrics } from './lyrics.svelte';
 import { voicebank } from './voicebank.svelte';
 
 export type RenderStatus = 'idle' | 'analyzing' | 'rendering' | 'ready' | 'error';
@@ -58,7 +59,12 @@ class PlaybackState {
 		this.job?.cancel();
 
 		const key = this.key();
-		const { notes, ids } = toEngineNotes(project.notes, project.tempoMap, project.tracks);
+		const { notes, ids } = toEngineNotes(
+			project.notes,
+			project.tempoMap,
+			project.tracks,
+			lyrics.alias
+		);
 		this.status = 'analyzing';
 		this.progress = 0;
 		this.message = 'Preparing samples…';
@@ -239,8 +245,13 @@ class PlaybackState {
 		this.beep(pitch); // instant feedback while the voice is rendered
 		try {
 			const engine = await getEngine();
+			const resolved = lyrics.preview(lyric, pitch);
+			const alias =
+				resolved && resolved.status !== 'missing' && resolved.status !== 'rest'
+					? resolved.alias
+					: lyric;
 			const note = {
-				alias: lyric,
+				alias,
 				pitch,
 				start_time: 0,
 				duration: 500,

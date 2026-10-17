@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Dialog from './Dialog.svelte';
+	import LyricDoctor from './LyricDoctor.svelte';
+	import { plugins } from '#lib/state/plugins.svelte';
 	import { splitLyrics } from '#lib/core/lyrics';
 	import { edit, file } from '#lib/state/commands';
 	import { getEngine } from '#lib/state/engine';
@@ -150,6 +152,24 @@
 			>
 		</div>
 
+		<h3>Lyrics and plugins</h3>
+		<label class="check">
+			<input type="checkbox" bind:checked={settings.data.lyricDoctor} />
+			After importing a project, offer to fix lyrics the voicebank does not have
+		</label>
+		<div class="plugins" role="group" aria-label="Plugins">
+			{#each plugins.list as p (p.id)}
+				<label class="plugin">
+					<input
+						type="checkbox"
+						checked={plugins.isEnabled(p.id)}
+						onchange={(e) => plugins.setEnabled(p.id, e.currentTarget.checked)}
+					/>
+					<span><b>{p.name}</b><small>{p.description}</small></span>
+				</label>
+			{/each}
+		</div>
+
 		<h3>Appearance</h3>
 		<div class="field">
 			<label for="s-theme">Theme</label>
@@ -229,6 +249,8 @@
 			>
 		{/snippet}
 	</Dialog>
+{:else if ui.dialog === 'lyric-doctor'}
+	<LyricDoctor />
 {:else if ui.dialog === 'tempo'}
 	<Dialog
 		title={tempoTick > 0 ? 'Tempo change' : 'Tempo & time signature'}
@@ -342,6 +364,27 @@
 	}
 	h3:first-child {
 		margin-top: 4px;
+	}
+	.plugins {
+		display: grid;
+		gap: 4px;
+		margin: 6px 0 12px;
+	}
+	.plugin {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 6px 4px;
+		border-radius: 8px;
+	}
+	.plugin span {
+		display: grid;
+		gap: 2px;
+	}
+	.plugin small {
+		color: var(--muted);
+		font-size: 12px;
+		line-height: 1.35;
 	}
 	.check {
 		display: flex;

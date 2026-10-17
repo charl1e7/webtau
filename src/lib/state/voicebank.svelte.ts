@@ -1,4 +1,5 @@
 import { loadFromEntry, loadFromFileList } from '#lib/voicebank/loader';
+import { AliasIndex } from '#lib/voicebank/alias-index';
 import type { Voicebank } from '#lib/voicebank/types';
 import type { AnalysisStats } from '#lib/engine/analysis';
 import { getEngine, onEngineStats } from './engine';
@@ -15,12 +16,20 @@ class VoicebankState {
 	/** Changes whenever a different voicebank is loaded: invalidates rendered audio. */
 	revision = $state(0);
 	warmingUp = $state(false);
+	/** Called after a voicebank was loaded (other modules react without this one knowing them). */
+	readonly loadedListeners: (() => void)[] = [];
 
 	constructor() {
 		onEngineStats((s) => (this.stats = s));
 	}
 
 	aliases = $derived(this.current?.aliases ?? []);
+	/** What the loaded voicebank can sing, for matching lyrics (null while none is loaded). */
+	index = $derived.by(() => {
+		const vb = this.current;
+		if (!vb || !vb.aliases.length) return null;
+		return new AliasIndex(vb.aliases, vb.prefixMap ? new TextDecoder().decode(vb.prefixMap) : null);
+	});
 
 	async load(source: File[] | FileSystemEntry) {
 		if (this.loading) return;
@@ -43,6 +52,7 @@ class VoicebankState {
 					(vb.generatedOto ? ' (oto.ini generated)' : ''),
 				'success'
 			);
+			for (const listener of this.loadedListeners) listener();
 
 			if (settings.data.backgroundAnalysis) {
 				this.warmingUp = true;

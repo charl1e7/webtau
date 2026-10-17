@@ -23,6 +23,10 @@ export interface SettingsData {
 	pitchMode: PitchMode;
 	pitchStyle: PitchStyle;
 	eraserMode: EraserMode;
+	/** Ids of plugins that are switched off. */
+	disabledPlugins: string[];
+	/** Offer to fix lyrics the voicebank does not have after importing a project. */
+	lyricDoctor: boolean;
 	/** UI scale for touch targets: 'auto' picks by input device. */
 	touchMode: 'auto' | 'on' | 'off';
 	theme: 'auto' | 'dark' | 'light';
@@ -48,6 +52,8 @@ const DEFAULTS: SettingsData = {
 	pitchMode: 'track',
 	pitchStyle: 'freehand',
 	eraserMode: 'all',
+	disabledPlugins: [],
+	lyricDoctor: true,
 	touchMode: 'auto',
 	theme: 'dark',
 	leftWidth: 308,

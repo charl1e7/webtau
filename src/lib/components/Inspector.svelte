@@ -5,7 +5,7 @@
 	import { getFlag, setFlag } from '#lib/core/flags';
 	import { PPQ, type Note } from '#lib/core/types';
 	import { pitch } from '#lib/state/commands';
-	import { playback } from '#lib/state/playback.svelte';
+	import { lyrics } from '#lib/state/lyrics.svelte';
 	import { project } from '#lib/state/project.svelte';
 	import { settings } from '#lib/state/settings.svelte';
 	import { ui } from '#lib/state/ui.svelte';
@@ -26,6 +26,10 @@
 		project.updateSelected(patch, key ?? Object.keys(patch)[0]);
 
 	const lyric = $derived(common('lyric'));
+	let lyricQuery = $state('');
+	const lyricOptions = $derived(sel[0] ? lyrics.suggestFor(lyricQuery, sel[0].pitch, 80) : []);
+	/** How the lyric of a single selected note resolves (nothing is shown for mixed selections). */
+	const lyricStatus = $derived(sel.length === 1 ? lyrics.resolutionOf(sel[0].id) : undefined);
 	const midi = $derived(common('pitch'));
 	const length = $derived(common('length'));
 	const tick = $derived(common('tick'));
@@ -208,16 +212,33 @@
 				autocapitalize="off"
 				value={lyric ?? ''}
 				placeholder={lyric === undefined ? 'mixed' : ''}
+				oninput={(e) => (lyricQuery = e.currentTarget.value)}
 				onchange={(e) =>
 					e.currentTarget.value.trim() && apply({ lyric: e.currentTarget.value.trim() })}
 			/>
 			<datalist id="alias-list">
-				{#each voicebank.aliases.slice(0, 800) as alias (alias)}
-					<option value={alias}></option>
+				{#each lyricOptions as s (s.alias)}
+					<option value={s.alias} label={s.hint ? `${s.alias} · ${s.hint}` : s.alias}></option>
 				{/each}
 			</datalist>
-			{#if playback.unknownLyrics.size && sel.some((n) => playback.unknownLyrics.has(n.id))}
-				<span class="warn">Not found in the voicebank.</span>
+			{#if lyricStatus}
+				{#if lyricStatus.status === 'missing'}
+					<span class="warn"
+						>Not found in the voicebank.
+						{#if lyricStatus.suggestions.length}
+							Try
+							<button
+								class="link"
+								onclick={() => apply({ lyric: lyricStatus.suggestions[0].alias })}
+								>{lyricStatus.suggestions[0].alias}</button
+							>
+							or
+						{/if}
+						<button class="link" onclick={() => ui.openDialog('lyric-doctor')}>fix all…</button>
+					</span>
+				{:else if lyricStatus.status === 'mapped'}
+					<span class="hint">Sung as “{lyricStatus.alias}”.</span>
+				{/if}
 			{/if}
 		</div>
 
@@ -461,6 +482,12 @@
 	.warn {
 		color: var(--warn);
 		font-size: 12px;
+	}
+	.link {
+		color: inherit;
+		text-decoration: underline;
+		padding: 0;
+		font: inherit;
 	}
 	.wrap {
 		flex-wrap: wrap;

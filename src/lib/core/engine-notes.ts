@@ -19,7 +19,9 @@ export function isAudible(track: Track | undefined, tracks: readonly Track[]): b
 export function toEngineNotes(
 	source: readonly Note[],
 	tempoMap: TempoMap,
-	tracks: readonly Track[] = []
+	tracks: readonly Track[] = [],
+	/** The alias to sing for a note; defaults to its lyric. */
+	aliasOf: (note: Note) => string = (n) => n.lyric
 ): { notes: EngineNote[]; ids: string[] } {
 	const byId = new Map(tracks.map((t, i) => [t.id, { track: t, index: i }]));
 	const audible = source.filter((n) => isAudible(byId.get(n.track)?.track, tracks));
@@ -32,7 +34,7 @@ export function toEngineNotes(
 		const duration = tempoMap.tickToMs(n.tick + n.length) - start;
 		const info = byId.get(n.track);
 		return {
-			alias: n.lyric,
+			alias: aliasOf(n),
 			pitch: n.pitch,
 			start_time: start,
 			duration,

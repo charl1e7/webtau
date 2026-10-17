@@ -2,7 +2,8 @@ import { browser } from '$app/env';
 import { settings } from './settings.svelte';
 
 export type Panel = 'voicebank' | 'inspector' | null;
-export type DialogName = 'settings' | 'lyrics' | 'midi' | 'about' | 'tempo' | 'shortcuts' | null;
+export type DialogName =
+	'settings' | 'lyrics' | 'lyric-doctor' | 'midi' | 'about' | 'tempo' | 'shortcuts' | null;
 
 export interface Toast {
 	id: number;

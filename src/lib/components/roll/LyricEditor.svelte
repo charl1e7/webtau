@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import { project } from '#lib/state/project.svelte';
 	import { ui } from '#lib/state/ui.svelte';
-	import { voicebank } from '#lib/state/voicebank.svelte';
+	import { lyrics } from '#lib/state/lyrics.svelte';
 	import { edit } from '#lib/state/commands';
 	import type { RollController } from './controller.svelte';
 	import { RULER_H } from './controller.svelte';
@@ -23,20 +23,8 @@
 		c.editingLyricId ? project.notes.find((n) => n.id === c.editingLyricId) : null
 	);
 
-	const matches = $derived.by(() => {
-		const q = typed ? text.trim().toLowerCase() : '';
-		const all = voicebank.aliases;
-		if (!q) return all.slice(0, 60);
-		const starts: string[] = [];
-		const contains: string[] = [];
-		for (const a of all) {
-			const l = a.toLowerCase();
-			if (l.startsWith(q)) starts.push(a);
-			else if (l.includes(q)) contains.push(a);
-			if (starts.length >= 60) break;
-		}
-		return [...starts, ...contains].slice(0, 60);
-	});
+	/** Plugins decide what is listed: by spelling, and across scripts (ra → ら). */
+	const matches = $derived(note ? lyrics.suggestFor(typed ? text : '', note.pitch, 60) : []);
 
 	// Open on request from menus / shortcuts.
 	$effect(() => {
@@ -120,10 +108,14 @@
 			cancel();
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
-			commit(matches[index] && text.trim() !== matches[index] && index > 0 ? matches[index] : text);
+			commit(
+				matches[index] && text.trim() !== matches[index].alias && index > 0
+					? matches[index].alias
+					: text
+			);
 		} else if (e.key === 'Tab') {
 			e.preventDefault();
-			commit(matches[index] && index > 0 ? matches[index] : text, true);
+			commit(matches[index] && index > 0 ? matches[index].alias : text, true);
 		} else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 			e.preventDefault();
 			if (!matches.length) return;
@@ -166,14 +158,16 @@
 				onpointerup={listUp}
 				onpointercancel={() => (press = null)}
 			>
-				{#each matches as alias, i (alias)}
+				{#each matches as s, i (s.alias)}
 					<li
 						role="option"
 						aria-selected={i === index}
 						class:active={i === index}
-						data-alias={alias}
+						data-alias={s.alias}
+						aria-label={s.alias}
 					>
-						{alias}
+						<span class="alias">{s.alias}</span>
+						{#if s.hint}<span class="reading">{s.hint}</span>{/if}
 					</li>
 				{/each}
 			</ul>
@@ -238,6 +232,10 @@
 		max-height: 38vh;
 	}
 	li {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 14px;
 		padding: 5px 12px;
 		cursor: pointer;
 		white-space: nowrap;
@@ -246,6 +244,10 @@
 	.compact li {
 		padding: 10px 14px;
 		font-size: 15px;
+	}
+	.reading {
+		font-size: 0.85em;
+		opacity: 0.6;
 	}
 	li.active {
 		background: var(--accent);

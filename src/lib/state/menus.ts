@@ -8,6 +8,7 @@ import { settings } from './settings.svelte';
 import { view } from './view.svelte';
 import { voicebank } from './voicebank.svelte';
 import { getEngine } from './engine';
+import { pluginMenuItems } from './plugin-host';
 import { TRACK_COLORS } from '#lib/core/music';
 
 const sep: MenuItem = { separator: true };
@@ -69,6 +70,7 @@ export function editMenu(): MenuItem[] {
 		sep,
 		{ label: 'Select all', hint: 'Ctrl+A', action: edit.selectAll },
 		{ label: 'Lyrics…', icon: 'text', hint: 'Ctrl+L', action: () => ui.openDialog('lyrics') },
+		{ label: 'Lyric tools', icon: 'wand', children: pluginMenuItems() },
 		toolsSubmenu()
 	];
 }
