@@ -126,8 +126,17 @@ Previews (`render_oneshot`) bypass the running session, so piano keys keep worki
 
 `playback.svelte.ts` plays final audio in short chunks. When the playhead reaches audio that is not final yet it
 holds position and sets `buffering` (spinner in the top bar, message with the reason); it resumes by itself. The ruler
-shows the ready ranges. Only one streaming backend gets this; several backends fall back to the batch path.
-Playback is not peak-normalised any more (the whole song is not known yet); WAV export still is.
+shows the ready ranges. After running dry (and at the start) playback does not go on the moment one more note is ready: it waits for a lead
+of 2 s of final audio (`LEAD_MS`), so it does not stutter forward note by note.
+
+Clipping is handled by `src/lib/render/limiter.ts`, a look-ahead peak limiter applied to every piece just before it
+goes to the sound card. It is stateless: the gain at a moment depends only on the audio within ~300 ms around it, so the
+result is identical however the song is cut into pieces, in whatever order it was rendered and wherever the playhead
+jumps; no whole-song peak search and nothing is re-rendered. Audio below the ceiling is untouched (gain exactly 1). A
+piece may be handed over once `LIMITER_LOOKAHEAD` of final audio exists after it. WAV export uses the same limiter.
+
+Only one streaming backend gets this; several backends fall back to the batch path.
+Playback is not peak-normalised any more (the whole song is not known yet), it is limited instead (above).
 
 ## How this compares with OpenUtau
 

@@ -208,4 +208,80 @@ test.describe('progressive rendering', () => {
 		// The edited note and its neighbour (its cross-fade changed); everything else is reused.
 		expect(Number(rendered)).toBeLessThanOrEqual(3);
 	});
+
+	test('after running dry it waits for a lead of about two seconds before going on', async ({
+		app
+	}) => {
+		await longSong(app, 400);
+		await app.eval((w) => {
+			const seen = { leads: [] as number[], was: false };
+			(globalThis as Record<string, unknown>).lead = seen;
+			setInterval(() => {
+				const now = w.playback.buffering;
+				if (seen.was && !now && w.playback.playing) {
+					const at = w.playback.positionMs;
+					seen.leads.push(w.playback.stream.readyUntil(at) - at);
+				}
+				seen.was = now;
+			}, 5);
+			w.playback.seekMs(60_000);
+			void w.playback.play();
+		});
+		await expect
+			.poll(() => app.eval((w) => w.playback.positionMs), { timeout: 30_000 })
+			.toBeGreaterThan(61_500);
+		const leads = await app.eval(
+			() => ((globalThis as Record<string, unknown>).lead as { leads: number[] }).leads
+		);
+		expect(leads.length).toBeGreaterThan(0);
+		// Playback did not go on the moment a single note was ready.
+		for (const lead of leads) expect(lead).toBeGreaterThan(1900);
+	});
+
+	test('a mix that would clip is turned down on the fly, a normal one is left alone', async ({
+		app
+	}) => {
+		const stack = (tracks: number) =>
+			app.eval((w, count) => {
+				w.project.load({ name: 'Loud', notes: [] });
+				for (let i = 0; i < count; i++) {
+					if (i > 0) w.project.addTrack();
+					w.project.addNote({ tick: 0, length: 960, pitch: 60, lyric: 'a' });
+				}
+				w.project.clearSelection();
+			}, tracks);
+		const play = async () => {
+			await app.eval((w) => {
+				const seen = { min: 1 };
+				(globalThis as Record<string, unknown>).gains = seen;
+				setInterval(() => (seen.min = Math.min(seen.min, w.playback.limiterGain)), 5);
+				void w.playback.play();
+			});
+			await expect
+				.poll(() => app.eval((w) => w.playback.status), { timeout: 30_000 })
+				.toBe('ready');
+			await expect
+				.poll(() => app.eval((w) => w.playback.positionMs), { timeout: 30_000 })
+				.toBeGreaterThan(300);
+			await app.eval((w) => w.playback.pause());
+			return app.eval(() => ((globalThis as Record<string, unknown>).gains as { min: number }).min);
+		};
+		const rawPeak = () =>
+			app.eval((w) => {
+				let peak = 0;
+				for (const v of w.playback.buffer.getChannelData(0)) peak = Math.max(peak, Math.abs(v));
+				return peak;
+			});
+
+		await stack(1);
+		const quiet = await play();
+		expect(await rawPeak()).toBeLessThan(0.95);
+		expect(quiet).toBe(1);
+
+		await stack(12);
+		await app.eval((w) => w.playback.stop());
+		const loud = await play();
+		expect(await rawPeak()).toBeGreaterThan(1);
+		expect(loud).toBeLessThan(0.9);
+	});
 });
