@@ -1,6 +1,7 @@
 import type { EngineNote, RenderReport } from './bridge';
 import { AnalysisScheduler, type AnalysisStats } from './analysis';
 import { FeatureCache } from './feature-cache';
+import { EngineStream } from './stream';
 import { SynthClient, WorkerCrashedError } from './synth-client';
 import { compileWasm } from './wasm';
 import type { Voicebank } from '#lib/voicebank/types';
@@ -137,6 +138,31 @@ export class EngineSession {
 			}
 		})();
 		return { promise, cancel };
+	}
+
+	private activeStream: EngineStream | null = null;
+
+	/**
+	 * Renders progressively: audio becomes available as soon as it is final, starting around
+	 * wherever `focus()` points. One stream at a time owns the engine's session, so a new one
+	 * first lets the previous one wind down (what it rendered stays cached).
+	 */
+	stream(notes: EngineNote[], tempo: number, hooks: RenderHooks = {}): EngineStream {
+		const previous = this.activeStream;
+		previous?.cancel();
+		const stream = new EngineStream(
+			this.synth,
+			this.scheduler,
+			notes,
+			tempo,
+			hooks,
+			previous ? previous.finished.catch(() => {}) : Promise.resolve()
+		);
+		this.activeStream = stream;
+		void stream.finished.then(() => {
+			if (this.activeStream === stream) this.activeStream = null;
+		});
+		return stream;
 	}
 
 	dispose() {

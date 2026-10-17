@@ -14,7 +14,7 @@ rustflags = [
     "-C", "link-arg=-sENVIRONMENT=web,worker,node",
     "-C", "link-arg=-sFILESYSTEM=0",
 
-    "-C", "link-arg=-sEXPORTED_FUNCTIONS=['_malloc','_free','_wsynth_init','_wsynth_analysis_version','_wsynth_engine_create','_wsynth_engine_destroy','_wsynth_engine_reset','_wsynth_engine_load_oto','_wsynth_engine_load_prefix_map','_wsynth_engine_oto_json','_wsynth_engine_required_files','_wsynth_engine_has_features','_wsynth_engine_cache_features','_wsynth_analyze_wav','_wsynth_session_begin','_wsynth_session_step','_wsynth_session_finish','_wsynth_engine_report','_wsynth_free_buffer']",
+    "-C", "link-arg=-sEXPORTED_FUNCTIONS=['_malloc','_free','_wsynth_init','_wsynth_analysis_version','_wsynth_engine_create','_wsynth_engine_destroy','_wsynth_engine_reset','_wsynth_engine_load_oto','_wsynth_engine_load_prefix_map','_wsynth_engine_oto_json','_wsynth_engine_required_files','_wsynth_engine_has_features','_wsynth_engine_cache_features','_wsynth_analyze_wav','_wsynth_session_begin','_wsynth_session_step','_wsynth_session_finish','_wsynth_session_plan','_wsynth_session_render','_wsynth_session_read','_wsynth_session_end','_wsynth_render_oneshot','_wsynth_engine_report','_wsynth_free_buffer']",
     "-C", "link-arg=-sEXPORTED_RUNTIME_METHODS=['cwrap','getValue','HEAPU8']",
 
     "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",

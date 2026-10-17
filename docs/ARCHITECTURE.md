@@ -114,6 +114,21 @@ preutterance to the gap. The result is passed to `render_note` as a `NoteTiming`
 reported back as `spans`, which the e2e tests use to assert that two notes are never at full level together.
 Pitch points are in note time (they may be negative) and are mapped onto the render with the lead taken into account.
 
+## Progressive rendering (playback while it renders)
+
+A render is a **stream**, not a batch (`RenderStream`, `src/lib/render/types.ts`). The engine first returns a plan
+(per note: where its sound lies in the output, which sample it needs); JS (`EngineStream`, `src/lib/engine/stream.ts`)
+then asks the engine to render notes in batches of its own choosing, always the unrendered notes nearest to the
+**focus** (the playhead). Samples are analysed on demand just before the batch that needs them. After each batch every
+stretch of time that no unrendered note can still touch is _final_ and may be read and played
+(`src/lib/render/intervals.ts`). Seeking calls `focus()`: the order changes at the next batch, nothing is restarted.
+Previews (`render_oneshot`) bypass the running session, so piano keys keep working during a render.
+
+`playback.svelte.ts` plays final audio in short chunks. When the playhead reaches audio that is not final yet it
+holds position and sets `buffering` (spinner in the top bar, message with the reason); it resumes by itself. The ruler
+shows the ready ranges. Only one streaming backend gets this; several backends fall back to the batch path.
+Playback is not peak-normalised any more (the whole song is not known yet); WAV export still is.
+
 ## How this compares with OpenUtau
 
 OpenUtau's phonemizers turn lyrics into phonemes inside the renderer pipeline, language by language, with

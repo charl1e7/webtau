@@ -1,5 +1,5 @@
 import { parse, stringify } from 'yaml';
-import { createNote, createPitchPoint, createTrack } from '#lib/core/music';
+import { TRACK_COLORS, createNote, createPitchPoint, createTrack } from '#lib/core/music';
 import { sortNotes, trimOverlaps } from '#lib/core/ops';
 import { getFlag, setFlag } from '#lib/core/flags';
 import { simplify } from '#lib/core/pitch-curve';
@@ -219,6 +219,16 @@ export function parseUstx(input: Uint8Array | string): UstxImport {
 			volume: dbToPercent(num(t.volume, 0))
 		});
 	});
+	// OpenUtau gives every track "Blue" unless the user changed it; tracks that came in with the same
+	// colour would be indistinguishable on the roll, so repeats get the next free colour of ours.
+	const used = new Set<string>();
+	for (const track of tracks) {
+		if (used.has(track.color)) {
+			track.color =
+				TRACK_COLORS.find((c) => !used.has(c)) ?? TRACK_COLORS[used.size % TRACK_COLORS.length];
+		}
+		used.add(track.color);
+	}
 
 	// Voice parts → notes (positions are relative to their part).
 	const notes: Note[] = [];

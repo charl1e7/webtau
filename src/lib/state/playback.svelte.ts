@@ -1,7 +1,14 @@
 import { toEngineNotes } from '#lib/core/engine-notes';
 import { encodeWav } from '#lib/io/wav';
 import { downloadBlob, safeFilename } from '#lib/io/download';
-import { renderMixed, type NoteSpanInfo, type RenderGroup } from '#lib/render/registry';
+import {
+	startRender,
+	type NoteSpanInfo,
+	type ProjectRender,
+	type RenderGroup
+} from '#lib/render/registry';
+import type { Interval } from '#lib/render/intervals';
+import type { RenderStream } from '#lib/render/types';
 import { renderers } from './renderers';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
@@ -12,15 +19,25 @@ import { voicebank } from './voicebank.svelte';
 export type RenderStatus = 'idle' | 'analyzing' | 'rendering' | 'ready' | 'error';
 
 const SAMPLE_RATE = 44100;
+/** How far ahead of the playhead audio is handed to the sound card. */
+const AHEAD_S = 0.5;
+/** Size of one scheduled piece of audio. */
+const CHUNK_MS = 200;
+/** Do not schedule slivers: wait until at least this much is ready. */
+const MIN_CHUNK_MS = 20;
 
 class PlaybackState {
 	status = $state<RenderStatus>('idle');
 	progress = $state(0);
 	message = $state('');
 	playing = $state(false);
+	/** Playing, but the render has not caught up with the playhead yet. */
+	buffering = $state(false);
 	/** Playhead position in milliseconds. */
 	positionMs = $state(0);
 	durationMs = $state(0);
+	/** The stretches of the song whose audio is final so far (while a render is going on). */
+	readyRanges = $state.raw<Interval[]>([]);
 	/** Notes whose lyric was not found in the voicebank (after the last render). */
 	unknownLyrics = $state.raw<ReadonlySet<string>>(new Set());
 	/** Where each note's sound lies on the time axis after the last render (for diagnostics and tests). */
@@ -32,34 +49,55 @@ class PlaybackState {
 
 	private buffer: AudioBuffer | null = null;
 	private renderedKey = '';
-	private job: { cancel: () => void } | null = null;
+	private run: ProjectRender | null = null;
 	private ctx: AudioContext | null = null;
-	private source: AudioBufferSourceNode | null = null;
-	private startedAtCtx = 0;
-	private startOffsetMs = 0;
-	private raf = 0;
+	private sources: AudioBufferSourceNode[] = [];
+	private timer: ReturnType<typeof setInterval> | undefined;
+	/** Next sample (of the song) to hand over, and the audio-clock time at which it will sound. */
+	private nextSample = 0;
+	private nextCtx = 0;
+	private startedFrom = 0;
+	private completed = false;
+
+	/** The progressive render that is going on (or was the last one). */
+	get stream(): RenderStream | null {
+		return this.run?.stream ?? null;
+	}
 
 	private key(): string {
 		return `${project.revision}:${voicebank.revision}:${settings.data.analysisQuality}`;
 	}
 
+	/** True when there is no finished or running render of what is on screen now. */
 	get isStale(): boolean {
-		return !this.buffer || this.renderedKey !== this.key();
+		return !this.run || this.renderedKey !== this.key();
+	}
+
+	/** End of the music in ms (a short tail after the last note). */
+	private endMs(): number {
+		return project.tempoMap.tickToMs(project.songEnd) + 300;
 	}
 
 	// ---- rendering -----------------------------------------------------------
 
-	/** Synthesizes the project. Resolves true when audio is available. */
-	async render(): Promise<boolean> {
+	/**
+	 * Makes sure there is a render of the current project (starting one if needed) and tells it
+	 * to work around `focusMs` first. Returns null when there is nothing to render.
+	 */
+	private ensureRender(focusMs: number): ProjectRender | null {
 		if (!voicebank.current) {
 			ui.error('Load a voicebank first (left panel).');
-			return false;
+			return null;
 		}
 		if (!project.notes.length) {
 			ui.error('Add some notes first.');
-			return false;
+			return null;
 		}
-		this.job?.cancel();
+		if (this.run && this.renderedKey === this.key()) {
+			this.run.stream.focus(focusMs);
+			return this.run;
+		}
+		this.run?.cancel();
 
 		const key = this.key();
 		const groups: RenderGroup[] = renderers
@@ -71,61 +109,90 @@ class PlaybackState {
 		this.status = 'analyzing';
 		this.progress = 0;
 		this.message = 'Preparing samples…';
+		this.completed = false;
+		this.buffer = null;
+		this.readyRanges = [];
 
-		try {
-			const job = renderMixed(groups, project.primaryTempo, {
-				onAnalyze: (done, total) => {
-					this.status = 'analyzing';
-					this.progress = total ? done / total : 0;
-					this.message = `Analyzing samples ${done}/${total}`;
-				},
-				onSynthesize: (done, total) => {
-					this.status = 'rendering';
-					this.progress = total ? done / total : 0;
-					this.message = `Synthesizing ${done}/${total}`;
+		const run = startRender(groups, project.primaryTempo, {
+			onAnalyze: (done, total) => {
+				if (this.run !== run) return;
+				this.status = 'analyzing';
+				this.message = `Analyzing samples ${done}/${total}`;
+			}
+		});
+		this.run = run;
+		this.renderedKey = key;
+		run.stream.focus(focusMs);
+		run.stream.onChange = () => this.syncStream(run);
+
+		void run.result.then(
+			(outcome) => {
+				if (this.run !== run) return;
+				if (!outcome) {
+					this.run = null;
+					this.status = 'idle';
+					this.readyRanges = [];
+					return;
 				}
-			});
-			this.job = job;
-			const outcome = await job.promise;
-			if (this.job !== job) return false; // superseded
-			this.job = null;
-			if (!outcome) {
-				this.status = 'idle';
-				return false;
+				const buffer = new AudioBuffer({ length: outcome.pcm.length, sampleRate: SAMPLE_RATE });
+				buffer.copyToChannel(outcome.pcm as Float32Array<ArrayBuffer>, 0);
+				this.buffer = buffer;
+				this.completed = true;
+				this.durationMs = buffer.duration * 1000;
+				this.unknownLyrics = new Set(outcome.missingAlias);
+				this.spans = outcome.spans;
+				this.readyRanges = [];
+				this.status = 'ready';
+				this.progress = 1;
+				this.message = `Rendered ${outcome.rendered}, reused ${outcome.cached}`;
+				ui.setStatus(this.message);
+				if (outcome.missingAlias.length) {
+					ui.toast(
+						`${outcome.missingAlias.length} note(s) have lyrics that are not in the voicebank (marked in red).`,
+						'error'
+					);
+				}
+				if (outcome.errors.length) console.warn('[render]', outcome.errors);
+			},
+			(error) => {
+				if (this.run !== run) return;
+				this.run = null;
+				this.status = 'error';
+				this.buffering = false;
+				this.message = error instanceof Error ? error.message : 'Synthesis failed.';
+				ui.error(this.message);
 			}
+		);
+		return run;
+	}
 
-			const buffer = new AudioBuffer({ length: outcome.pcm.length, sampleRate: SAMPLE_RATE });
-			buffer.copyToChannel(outcome.pcm as Float32Array<ArrayBuffer>, 0);
-			this.buffer = buffer;
-			this.renderedKey = key;
-			this.durationMs = buffer.duration * 1000;
+	/** Copies what the running render knows into reactive state. */
+	private syncStream(run: ProjectRender) {
+		if (this.run !== run || this.completed) return;
+		const { stream } = run;
+		const { done, total } = stream.progress;
+		this.durationMs = stream.durationMs;
+		this.readyRanges = stream.ready();
+		this.progress = total ? done / total : 0;
+		this.status = stream.waiting?.startsWith('Analy') ? 'analyzing' : 'rendering';
+		this.message = this.buffering
+			? `Buffering… ${done}/${total} notes`
+			: (stream.waiting ?? `Rendering ${done}/${total}`);
+	}
 
-			this.unknownLyrics = new Set(outcome.missingAlias);
-			this.spans = outcome.spans;
-			this.status = 'ready';
-			this.progress = 1;
-			this.message = `Rendered ${outcome.rendered}, reused ${outcome.cached}`;
-			ui.setStatus(this.message);
-			if (outcome.missingAlias.length) {
-				ui.toast(
-					`${outcome.missingAlias.length} note(s) have lyrics that are not in the voicebank (marked in red).`,
-					'error'
-				);
-			}
-			if (outcome.errors.length) console.warn('[render]', outcome.errors);
-			return true;
-		} catch (error) {
-			this.job = null;
-			this.status = 'error';
-			this.message = error instanceof Error ? error.message : 'Synthesis failed.';
-			ui.error(this.message);
-			return false;
-		}
+	/** Synthesizes the whole project. Resolves true when all of its audio is available. */
+	async render(): Promise<boolean> {
+		const run = this.ensureRender(0);
+		if (!run) return false;
+		const outcome = await run.result.catch(() => null);
+		return !!outcome && this.run === run;
 	}
 
 	cancelRender() {
-		this.job?.cancel();
-		this.job = null;
+		this.run?.cancel();
+		this.run = null;
+		this.readyRanges = [];
+		this.buffering = false;
 		if (this.busy) this.status = 'idle';
 	}
 
@@ -136,72 +203,131 @@ class PlaybackState {
 		else await this.play();
 	}
 
+	/** Starts playing at once: whatever is not rendered yet is rendered ahead of the playhead. */
 	async play() {
-		if (this.busy) {
-			this.cancelRender();
-			return;
-		}
-		if (this.isStale && !(await this.render())) return;
-		this.start(this.startPosition());
+		const from = this.startPosition();
+		if (!this.ensureRender(from)) return;
+		this.start(from);
 	}
 
 	private startPosition(): number {
 		if (settings.data.playbackStart === 'start') return 0;
-		return this.positionMs >= this.durationMs - 30 ? 0 : this.positionMs;
+		return this.positionMs >= this.endMs() - 30 ? 0 : this.positionMs;
+	}
+
+	private audioContext(): AudioContext {
+		if (!this.ctx) {
+			try {
+				// The song is rendered at 44.1 kHz; the same rate avoids resampling at piece borders.
+				this.ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: SAMPLE_RATE });
+			} catch {
+				this.ctx = new AudioContext({ latencyHint: 'interactive' });
+			}
+		}
+		return this.ctx;
 	}
 
 	private start(fromMs: number) {
-		if (!this.buffer) return;
-		this.ctx ??= new AudioContext({ latencyHint: 'interactive' });
-		void this.ctx.resume();
+		const ctx = this.audioContext();
+		void ctx.resume();
 		this.halt();
-
-		const source = this.ctx.createBufferSource();
-		source.buffer = this.buffer;
-		source.connect(this.ctx.destination);
-		source.onended = () => {
-			if (this.source !== source) return;
-			this.halt();
-			this.playing = false;
-			this.positionMs = 0;
-		};
-		this.startOffsetMs = fromMs;
-		this.startedAtCtx = this.ctx.currentTime;
-		source.start(0, fromMs / 1000);
-		this.source = source;
 		this.playing = true;
+		this.buffering = false;
+		this.startedFrom = fromMs;
 		this.positionMs = fromMs;
-
-		const tick = () => {
-			if (!this.playing || !this.ctx) return;
-			this.positionMs = this.startOffsetMs + (this.ctx.currentTime - this.startedAtCtx) * 1000;
-			this.raf = requestAnimationFrame(tick);
-		};
-		cancelAnimationFrame(this.raf);
-		this.raf = requestAnimationFrame(tick);
+		this.nextSample = Math.floor((fromMs / 1000) * SAMPLE_RATE);
+		this.nextCtx = ctx.currentTime + 0.06;
+		this.run?.stream.focus(fromMs);
+		this.timer = setInterval(() => this.pump(), 30);
+		this.pump();
 	}
 
-	/** Stops the audio node without touching the playhead. */
+	/** Hands the next ready pieces of the song to the sound card and moves the playhead. */
+	private pump() {
+		const ctx = this.ctx;
+		const stream = this.run?.stream;
+		if (!ctx || !stream || !this.playing) return;
+		const now = ctx.currentTime;
+		const endSample = Math.floor((this.endMs() / 1000) * SAMPLE_RATE);
+
+		if (this.nextCtx < now) {
+			// Everything handed over has been played: the playhead waits where the audio ends.
+			this.positionMs = Math.max(this.positionMs, (this.nextSample / SAMPLE_RATE) * 1000);
+			this.nextCtx = now + 0.03;
+		}
+
+		let starving = false;
+		while (this.nextCtx - now < AHEAD_S && this.nextSample < endSample) {
+			const fromMs = (this.nextSample / SAMPLE_RATE) * 1000;
+			const readyMs = stream.readyUntil(fromMs);
+			const toSample = Math.min(
+				Math.floor((readyMs / 1000) * SAMPLE_RATE),
+				this.nextSample + Math.floor((CHUNK_MS / 1000) * SAMPLE_RATE),
+				endSample
+			);
+			if (toSample - this.nextSample < (MIN_CHUNK_MS / 1000) * SAMPLE_RATE) {
+				starving = this.nextSample < endSample;
+				break;
+			}
+			this.schedule(ctx, stream.buffer, this.nextSample, toSample);
+		}
+
+		const queued = Math.max(0, this.nextCtx - now);
+		const playedMs = (this.nextSample / SAMPLE_RATE) * 1000 - queued * 1000;
+		this.positionMs = Math.max(this.positionMs, this.startedFrom, playedMs);
+
+		const wasBuffering = this.buffering;
+		this.buffering = starving && queued < 0.04;
+		if (this.buffering !== wasBuffering && this.run) this.syncStream(this.run);
+
+		if (this.nextSample >= endSample && queued <= 0.01) {
+			this.halt();
+			this.playing = false;
+			this.buffering = false;
+			this.positionMs = 0;
+		}
+	}
+
+	private schedule(ctx: AudioContext, pcm: Float32Array, from: number, to: number) {
+		const piece = ctx.createBuffer(1, to - from, SAMPLE_RATE);
+		piece.copyToChannel(pcm.subarray(from, to) as Float32Array<ArrayBuffer>, 0);
+		const source = ctx.createBufferSource();
+		source.buffer = piece;
+		source.connect(ctx.destination);
+		source.onended = () => {
+			this.sources = this.sources.filter((s) => s !== source);
+		};
+		source.start(this.nextCtx);
+		this.sources.push(source);
+		this.nextCtx += (to - from) / SAMPLE_RATE;
+		this.nextSample = to;
+	}
+
+	/** Stops the audio without touching the playhead. */
 	private halt() {
-		cancelAnimationFrame(this.raf);
-		if (this.source) {
-			this.source.onended = null;
+		clearInterval(this.timer);
+		this.timer = undefined;
+		for (const source of this.sources) {
+			source.onended = null;
 			try {
-				this.source.stop();
+				source.stop();
 			} catch {
 				/* already stopped */
 			}
-			this.source.disconnect();
-			this.source = null;
+			source.disconnect();
 		}
+		this.sources = [];
 	}
 
 	pause() {
 		if (this.playing && this.ctx) {
-			this.positionMs = this.startOffsetMs + (this.ctx.currentTime - this.startedAtCtx) * 1000;
+			const queued = Math.max(0, this.nextCtx - this.ctx.currentTime);
+			const playedMs = (this.nextSample / SAMPLE_RATE) * 1000 - queued * 1000;
+			this.positionMs = Math.max(this.startedFrom, playedMs, this.positionMs);
 		}
 		this.halt();
 		this.playing = false;
+		this.buffering = false;
 	}
 
 	stop() {
@@ -210,9 +336,11 @@ class PlaybackState {
 		this.positionMs = 0;
 	}
 
+	/** Moves the playhead. The render follows: whatever is around the new position is done first. */
 	seekMs(ms: number) {
 		const target = Math.max(0, ms);
-		if (this.playing && this.buffer) this.start(Math.min(target, this.durationMs - 5));
+		this.run?.stream.focus(target);
+		if (this.playing) this.start(target);
 		else this.positionMs = target;
 	}
 
@@ -232,8 +360,7 @@ class PlaybackState {
 	 * if the lyric exists there, otherwise as a plain tone.
 	 */
 	async preview(pitch: number) {
-		this.ctx ??= new AudioContext({ latencyHint: 'interactive' });
-		void this.ctx.resume();
+		void this.audioContext().resume();
 		const lyric = (project.selectedNotes[0]?.lyric || settings.data.defaultLyric || 'a').trim();
 		const key = `${voicebank.revision}|${lyric}|${pitch}`;
 		this.stopPreview();
@@ -332,8 +459,13 @@ class PlaybackState {
 	// ---- export ---------------------------------------------------------------------
 
 	async exportWav() {
-		if (this.isStale && !(await this.render())) return;
-		const pcm = this.buffer!.getChannelData(0);
+		if ((this.isStale || !this.completed) && !(await this.render())) return;
+		const source = this.buffer!.getChannelData(0);
+		// Playback is not normalized; a file is: quiet or clipping mixes are brought to a sensible level.
+		let peak = 0;
+		for (const v of source) peak = Math.max(peak, Math.abs(v));
+		const gain = peak > 0.001 && (peak < 0.8 || peak > 1) ? 0.95 / peak : 1;
+		const pcm = gain === 1 ? source : source.map((v) => v * gain);
 		downloadBlob(encodeWav(pcm, SAMPLE_RATE), `${safeFilename(project.name)}.wav`, 'audio/wav');
 		ui.toast('WAV exported.', 'success');
 	}

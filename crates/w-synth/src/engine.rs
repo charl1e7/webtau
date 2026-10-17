@@ -77,6 +77,20 @@ pub struct RenderReport {
     pub spans: Vec<NoteSpan>,
 }
 
+/// Where a planned note will sound, known before it is rendered.
+#[derive(Serialize, Clone, Debug)]
+pub struct PlanInfo {
+    /// Index in the plan (what `render_planned` takes).
+    pub index: usize,
+    /// Index in the notes array sent by the host.
+    pub source_index: usize,
+    pub start: f64,
+    pub span_start: f64,
+    pub span_end: f64,
+    /// The sample the note needs (as written in oto.ini).
+    pub file: String,
+}
+
 /// The audible stretch of one note, absolute in milliseconds. The note fades in
 /// over `fade_in` from `start` and fades out over `fade_out` up to `end`.
 #[derive(Serialize, Clone, Debug)]
@@ -100,6 +114,8 @@ struct Session {
     project: ProjectInfo,
     plan: Vec<PlannedNote>,
     cursor: usize,
+    /// Which planned notes are already in the master buffer.
+    rendered: Vec<bool>,
     master: Vec<f32>,
     new_cache: HashMap<u64, Rc<RenderedNote>>,
     report: RenderReport,
@@ -251,6 +267,7 @@ impl Engine {
         let count = plan.len();
         self.session = Some(Session {
             project,
+            rendered: vec![false; count],
             plan,
             cursor: 0,
             master: vec![0.0; total_samples],
@@ -291,71 +308,167 @@ impl Engine {
         }
     }
 
-    /// Renders up to `max_notes` more notes. Returns how many remain.
+    /// Renders up to `max_notes` more notes in time order. Returns how many remain.
     pub fn step(&mut self, max_notes: usize) -> Result<usize> {
+        let session = self.session.as_mut().ok_or_else(|| anyhow!("no synthesis session"))?;
+        let mut picked = Vec::new();
+        while picked.len() < max_notes.max(1) && session.cursor < session.plan.len() {
+            if !session.rendered[session.cursor] {
+                picked.push(session.cursor);
+            }
+            session.cursor += 1;
+        }
+        self.render_planned(&picked)
+    }
+
+    /// Renders the given planned notes (any order, already rendered ones are
+    /// skipped). Returns how many planned notes are still not rendered.
+    pub fn render_planned(&mut self, indices: &[usize]) -> Result<usize> {
         let mut session = self
             .session
             .take()
             .ok_or_else(|| anyhow!("no synthesis session"))?;
-        let end = (session.cursor + max_notes.max(1)).min(session.plan.len());
-
-        while session.cursor < end {
-            let planned = &session.plan[session.cursor];
-            session.cursor += 1;
-            let note = &session.project.notes[planned.source_index];
-            let Some(oto) = self.oto.find(&planned.oto_alias) else {
-                continue;
-            };
-            let Some(stored) = self.features.get(&normalize_filename(&oto.filename)) else {
-                session.report.missing_features.push(planned.source_index);
-                continue;
-            };
-
-            let key = cache_key(note, &planned.oto_alias, &planned.timing, stored.epoch);
-            let rendered = if let Some(hit) = self.render_cache.get(&key) {
-                session.report.cached += 1;
-                hit.clone()
-            } else {
-                match resample::render_note(note, oto, &stored.features, &planned.timing)
-                {
-                    Ok(r) => {
-                        session.report.rendered += 1;
-                        Rc::new(r)
-                    }
-                    Err(e) => {
-                        session
-                            .report
-                            .errors
-                            .push(format!("note {}: {e}", planned.source_index));
-                        continue;
-                    }
-                }
-            };
-
-            let start_ms = note.start_time - rendered.lead_ms;
-            let samples_ms = rendered.pcm.len() as f64 / consts::SAMPLE_RATE as f64 * 1000.0;
-            session.report.spans.push(NoteSpan {
-                index: planned.source_index,
-                start: start_ms,
-                end: start_ms + samples_ms,
-                fade_in: planned.timing.fade_in,
-                fade_out: planned.timing.fade_out,
-            });
-            let start_sample = (start_ms / 1000.0 * consts::SAMPLE_RATE as f64).round() as i64;
-            for (j, s) in rendered.pcm.iter().enumerate() {
-                let idx = start_sample + j as i64;
-                if idx >= 0 {
-                    if let Some(m) = session.master.get_mut(idx as usize) {
-                        *m += *s;
-                    }
-                }
+        for &i in indices {
+            if i < session.plan.len() && !session.rendered[i] {
+                session.rendered[i] = true;
+                self.render_one(&mut session, i);
             }
-            session.new_cache.insert(key, rendered);
         }
-
-        let remaining = session.plan.len() - session.cursor;
+        let remaining = session.rendered.iter().filter(|r| !**r).count();
         self.session = Some(session);
         Ok(remaining)
+    }
+
+    fn render_one(&self, session: &mut Session, i: usize) {
+        let planned = &session.plan[i];
+        let note = &session.project.notes[planned.source_index];
+        let Some(oto) = self.oto.find(&planned.oto_alias) else {
+            return;
+        };
+        let Some(stored) = self.features.get(&normalize_filename(&oto.filename)) else {
+            session.report.missing_features.push(planned.source_index);
+            return;
+        };
+
+        let key = cache_key(note, &planned.oto_alias, &planned.timing, stored.epoch);
+        let rendered = if let Some(hit) = self.render_cache.get(&key) {
+            session.report.cached += 1;
+            hit.clone()
+        } else {
+            match resample::render_note(note, oto, &stored.features, &planned.timing) {
+                Ok(r) => {
+                    session.report.rendered += 1;
+                    Rc::new(r)
+                }
+                Err(e) => {
+                    session
+                        .report
+                        .errors
+                        .push(format!("note {}: {e}", planned.source_index));
+                    return;
+                }
+            }
+        };
+
+        let start_ms = note.start_time - rendered.lead_ms;
+        let samples_ms = rendered.pcm.len() as f64 / consts::SAMPLE_RATE as f64 * 1000.0;
+        let (source_index, fade_in, fade_out) =
+            (planned.source_index, planned.timing.fade_in, planned.timing.fade_out);
+        session.report.spans.push(NoteSpan {
+            index: source_index,
+            start: start_ms,
+            end: start_ms + samples_ms,
+            fade_in,
+            fade_out,
+        });
+        let start_sample = (start_ms / 1000.0 * consts::SAMPLE_RATE as f64).round() as i64;
+        for (j, s) in rendered.pcm.iter().enumerate() {
+            let idx = start_sample + j as i64;
+            if idx >= 0 {
+                if let Some(m) = session.master.get_mut(idx as usize) {
+                    *m += *s;
+                }
+            }
+        }
+        let key = cache_key(
+            &session.project.notes[source_index],
+            &session.plan[i].oto_alias,
+            &session.plan[i].timing,
+            stored.epoch,
+        );
+        session.new_cache.insert(key, rendered);
+    }
+
+    /// Where the planned notes will sound, for scheduling a progressive render.
+    pub fn plan_info(&self) -> Vec<PlanInfo> {
+        let Some(session) = &self.session else {
+            return Vec::new();
+        };
+        session
+            .plan
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let note = &session.project.notes[p.source_index];
+                PlanInfo {
+                    index: i,
+                    source_index: p.source_index,
+                    start: note.start_time,
+                    span_start: note.start_time - p.timing.preutter,
+                    span_end: note.start_time + p.timing.end_ms(note.duration.max(1.0)),
+                    file: self
+                        .oto
+                        .find(&p.oto_alias)
+                        .map(|o| o.filename.clone())
+                        .unwrap_or_default(),
+                }
+            })
+            .collect()
+    }
+
+    /// A copy of a part of the mix as it is now (zero where nothing was rendered yet).
+    pub fn read_master(&self, start: usize, len: usize) -> Vec<f32> {
+        let Some(session) = &self.session else {
+            return Vec::new();
+        };
+        let from = start.min(session.master.len());
+        let to = start.saturating_add(len).min(session.master.len());
+        session.master[from..to].to_vec()
+    }
+
+    /// Renders a whole project without disturbing a running session (a note preview while a
+    /// progressive render is going on). The render cache only grows.
+    pub fn render_oneshot(&mut self, project: ProjectInfo) -> Result<(Vec<f32>, RenderReport)> {
+        let parked_session = self.session.take();
+        let parked_report = std::mem::take(&mut self.last_report);
+        let count = self.begin(project);
+        let outcome = (|| {
+            let indices: Vec<usize> = (0..count).collect();
+            self.render_planned(&indices)?;
+            let total = self.session.as_ref().map_or(0, |s| s.master.len());
+            let pcm = self.read_master(0, total);
+            self.end_stream(false)?;
+            Ok((pcm, self.last_report.clone()))
+        })();
+        self.session = parked_session;
+        self.last_report = parked_report;
+        outcome
+    }
+
+    /// Ends a progressive session. A complete one replaces the render cache (what was not
+    /// rendered is evicted); an abandoned one only adds what it rendered.
+    pub fn end_stream(&mut self, complete: bool) -> Result<()> {
+        let session = self
+            .session
+            .take()
+            .ok_or_else(|| anyhow!("no synthesis session"))?;
+        if complete {
+            self.render_cache = session.new_cache;
+        } else {
+            self.render_cache.extend(session.new_cache);
+        }
+        self.last_report = session.report;
+        Ok(())
     }
 
     /// Normalizes the mix and returns it. Notes that were not rendered in this
@@ -578,6 +691,101 @@ mod tests {
         let pcm = engine.finish().unwrap();
         assert!(pcm.iter().any(|s| s.abs() > 0.1));
         assert_eq!(engine.report().rendered, 4);
+    }
+
+    /// A progressive render may render notes in any order (starting where the playhead is)
+    /// and read finished parts of the mix before the rest exists.
+    #[test]
+    fn notes_can_be_rendered_in_any_order_and_read_back_early() {
+        let mut engine = Engine::new();
+        engine.load_oto(b"a.wav=a,0,150,-100,40,20\n").unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        let features = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        engine.cache_features("a.wav", features);
+        let notes = || -> Vec<NoteInfo> {
+            (0..6).map(|i| note("a", i as f64 * 300.0, 300.0, 55 + (i % 3) * 2)).collect()
+        };
+        let project = || ProjectInfo { tempo: 120.0, notes: notes() };
+
+        // In time order.
+        engine.begin(project());
+        while engine.step(1).unwrap() > 0 {}
+        let reference = engine.read_master(0, 44100 * 2);
+        engine.end_stream(true).unwrap();
+
+        // Backwards, a few at a time, reading the middle after only the second half exists.
+        engine.begin(project());
+        let plan = engine.plan_info();
+        assert_eq!(plan.len(), 6);
+        assert!(plan.windows(2).all(|w| w[0].start < w[1].start));
+        assert!(plan.iter().all(|p| p.span_end > p.start && p.file == "a.wav"));
+        assert_eq!(engine.render_planned(&[5, 4, 3]).unwrap(), 3);
+        let sr = consts::SAMPLE_RATE as f64;
+        let from = (plan[3].span_start.max(0.0) / 1000.0 * sr) as usize;
+        let early = engine.read_master(from + 200, 3000);
+        assert!(early.iter().any(|s| s.abs() > 0.05), "the rendered half is audible already");
+        // The unrendered first half is still silent at this point.
+        assert!(engine.read_master(0, 2000).iter().all(|s| s.abs() < 1e-6));
+        assert_eq!(engine.render_planned(&[2, 1, 0, 5]).unwrap(), 0);
+        let backwards = engine.read_master(0, 44100 * 2);
+        engine.end_stream(true).unwrap();
+        assert_eq!(reference.len(), backwards.len());
+        let worst = reference
+            .iter()
+            .zip(&backwards)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "order must not change the sound (worst difference {worst})");
+        // Everything was cached by the first run, so the second only reused it.
+        assert_eq!(engine.report().rendered, 0);
+        assert_eq!(engine.report().cached, 6);
+    }
+
+    #[test]
+    fn a_oneshot_render_leaves_a_running_session_alone() {
+        let mut engine = Engine::new();
+        engine.load_oto(b"a.wav=a,0,150,-100,40,20\n").unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        let features = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        engine.cache_features("a.wav", features);
+        let project = ProjectInfo {
+            tempo: 120.0,
+            notes: (0..3).map(|i| note("a", i as f64 * 300.0, 300.0, 55 + i)).collect(),
+        };
+        engine.begin(project);
+        engine.render_planned(&[0]).unwrap();
+
+        let preview = ProjectInfo { tempo: 120.0, notes: vec![note("a", 0.0, 500.0, 64)] };
+        let (pcm, report) = engine.render_oneshot(preview).unwrap();
+        assert!(pcm.iter().any(|s| s.abs() > 0.05));
+        assert_eq!(report.rendered, 1);
+
+        // The progressive session carries on as if nothing happened.
+        assert_eq!(engine.plan_info().len(), 3);
+        assert_eq!(engine.render_planned(&[1, 2]).unwrap(), 0);
+        engine.end_stream(true).unwrap();
+        assert_eq!(engine.report().rendered, 3);
+    }
+
+    #[test]
+    fn an_abandoned_progressive_session_keeps_what_it_rendered() {
+        let mut engine = Engine::new();
+        engine.load_oto(b"a.wav=a,0,150,-100,40,20\n").unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        let features = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        engine.cache_features("a.wav", features);
+        let project = || ProjectInfo {
+            tempo: 120.0,
+            notes: (0..4).map(|i| note("a", i as f64 * 300.0, 300.0, 55 + i)).collect(),
+        };
+        engine.begin(project());
+        engine.render_planned(&[0, 1]).unwrap();
+        engine.end_stream(false).unwrap();
+        engine.begin(project());
+        while engine.step(8).unwrap() > 0 {}
+        engine.end_stream(true).unwrap();
+        let r = engine.report();
+        assert_eq!((r.rendered, r.cached), (2, 2));
     }
 
     #[test]

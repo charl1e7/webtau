@@ -120,6 +120,19 @@ describe('parseUstx', () => {
 		expect(u.tracks[1].volume).toBe(100);
 	});
 
+	it('gives tracks that arrive with the same colour distinct colours', () => {
+		const many = parseUstx(
+			'tracks:\n' +
+				Array.from({ length: 5 }, (_, i) => `- track_name: T${i}\n  track_color: Blue\n`).join('') +
+				'- track_name: Pink one\n  track_color: Pink\nvoice_parts:\n- track_no: 0\n  notes:\n  - {position: 0, duration: 480, tone: 60, lyric: a}\n'
+		);
+		const colors = many.tracks.map((t) => t.color);
+		expect(new Set(colors).size).toBe(colors.length);
+		// The first track keeps what the file said.
+		expect(colors[0]).toBe('#4EA6EA');
+		expect(colors[5]).toBe('#F06292');
+	});
+
 	it('places notes at part position + note position, on their track', () => {
 		const lead = u.notes.filter((n) => n.track === u.tracks[0].id);
 		expect(lead.map((n) => [n.tick, n.length, n.pitch])).toEqual([

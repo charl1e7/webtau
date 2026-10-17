@@ -1,4 +1,4 @@
-import type { EngineNote, RenderReport } from './bridge';
+import type { EngineNote, PlanEntry, RenderReport } from './bridge';
 import type {
 	SynthReply,
 	SynthRequest,
@@ -124,6 +124,24 @@ export class SynthClient {
 				this.worker.postMessage({ type: 'cancel', id } satisfies WorkerCancel);
 		};
 		return { promise, cancel };
+	}
+
+	// ---- progressive rendering: one note batch at a time, in whatever order the caller wants ----
+
+	streamBegin(notes: EngineNote[], tempo: number): Promise<{ plan: PlanEntry[] }> {
+		return this.request({ type: 'stream_begin', notes, tempo });
+	}
+
+	streamRender(indices: number[]) {
+		return this.request({ type: 'stream_render', indices });
+	}
+
+	streamRead(start: number, len: number) {
+		return this.request({ type: 'stream_read', start, len });
+	}
+
+	streamEnd(complete: boolean) {
+		return this.request({ type: 'stream_end', complete });
 	}
 
 	terminate() {
