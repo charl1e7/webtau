@@ -7,6 +7,7 @@ import { project } from './project.svelte';
 import { settings } from './settings.svelte';
 import { view } from './view.svelte';
 import { voicebank } from './voicebank.svelte';
+import { formats } from '#lib/io/format-registry';
 import { getEngine } from './engine';
 import { pluginMenuItems } from './plugin-host';
 import { TRACK_COLORS } from '#lib/core/music';
@@ -19,15 +20,19 @@ export function fileMenu(): MenuItem[] {
 		{ label: 'Open project…', icon: 'folder', hint: 'Ctrl+O', action: file.open },
 		{ label: 'Save project', icon: 'save', hint: 'Ctrl+S', action: file.save },
 		sep,
-		{ label: 'Import UST…', icon: 'upload', action: file.importUst },
-		{ label: 'Import USTX (OpenUtau)…', icon: 'upload', action: file.importUstx },
-		{ label: 'Import MIDI…', icon: 'upload', action: file.importMidi },
-		{ label: 'Import VSQX (VOCALOID)…', icon: 'upload', action: file.importVsqx },
+		...formats.imports().map((f): MenuItem => ({
+			label: f.label,
+			icon: 'upload',
+			hint: f.hint,
+			action: () => void f.action()
+		})),
 		sep,
-		{ label: 'Export WAV', icon: 'download', hint: 'Ctrl+E', action: file.exportWav },
-		{ label: 'Export UST', icon: 'download', action: file.exportUst },
-		{ label: 'Export USTX (OpenUtau)', icon: 'download', action: file.exportUstx },
-		{ label: 'Export MIDI', icon: 'download', action: file.exportMidi }
+		...formats.exports().map((f): MenuItem => ({
+			label: f.label,
+			icon: 'download',
+			hint: f.hint,
+			action: () => void f.action()
+		}))
 	];
 }
 

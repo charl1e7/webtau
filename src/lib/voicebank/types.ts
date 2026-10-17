@@ -10,6 +10,8 @@ export interface SampleFile {
 }
 
 export interface Voicebank {
+	/** What kind of voicebank this is; renderers say which kinds they can use. */
+	kind: 'utau';
 	/** Stable id derived from the contents, used as cache namespace. */
 	id: string;
 	name: string;

@@ -3,7 +3,7 @@ import { decodeText, encodeText } from '#lib/io/text';
 import { sampleKey, type SampleFile, type Voicebank } from './types';
 
 /** A file found while scanning a folder or archive. */
-interface Entry {
+export interface Entry {
 	path: string;
 	size: number;
 	read(): Promise<Uint8Array<ArrayBuffer>>;
@@ -44,6 +44,41 @@ const dirName = (path: string) => {
 	const p = path.replace(/\\/g, '/');
 	return p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '';
 };
+
+/**
+ * A kind of voicebank the app can open. `detect` looks at the file paths only
+ * (cheap); `build` reads what it needs. Register another loader to open
+ * another format; the first loader whose `detect` says yes is used.
+ */
+export interface VoicebankLoader {
+	id: string;
+	detect(paths: string[]): boolean;
+	build(
+		entries: Entry[],
+		fallbackName: string,
+		fingerprintSeed: string,
+		status: StatusFn
+	): Promise<Voicebank>;
+}
+
+const loaders: VoicebankLoader[] = [];
+
+export function registerVoicebankLoader(loader: VoicebankLoader) {
+	loaders.push(loader);
+}
+
+/** Picks the loader that recognizes the files and lets it build the voicebank. */
+export async function buildAnyVoicebank(
+	entries: Entry[],
+	fallbackName: string,
+	fingerprintSeed: string,
+	status: StatusFn
+): Promise<Voicebank> {
+	const paths = entries.map((e) => e.path);
+	const loader = loaders.find((l) => l.detect(paths));
+	if (!loader) throw new Error('No .wav files were found in the selected folder or archive.');
+	return loader.build(entries, fallbackName, fingerprintSeed, status);
+}
 
 export async function buildVoicebank(
 	entries: Entry[],
@@ -116,6 +151,7 @@ export async function buildVoicebank(
 	);
 
 	return {
+		kind: 'utau',
 		id: fingerprint,
 		name,
 		image,
@@ -202,11 +238,11 @@ export async function loadFromFileList(files: File[], status: StatusFn): Promise
 	const zip = files.find((f) => f.name.toLowerCase().endsWith('.zip'));
 	if (zip && files.length === 1) {
 		const entries = await entriesFromZip(zip, status);
-		return buildVoicebank(entries, stem(zip.name), `${zip.name}:${zip.size}`, status);
+		return buildAnyVoicebank(entries, stem(zip.name), `${zip.name}:${zip.size}`, status);
 	}
 	const root = files[0].webkitRelativePath?.split('/')[0] || 'voicebank';
 	status(`Reading folder “${root}”…`);
-	return buildVoicebank(entriesFromFiles(files), root, root, status);
+	return buildAnyVoicebank(entriesFromFiles(files), root, root, status);
 }
 
 /**
@@ -222,5 +258,12 @@ export async function loadFromEntry(entry: FileSystemEntry, status: StatusFn): P
 	}
 	status(`Reading folder “${entry.name}”…`);
 	const files = await filesFromDirectory(entry as FileSystemDirectoryEntry);
-	return buildVoicebank(entriesFromFiles(files), entry.name, entry.name, status);
+	return buildAnyVoicebank(entriesFromFiles(files), entry.name, entry.name, status);
 }
+
+// The classic UTAU voicebank: oto.ini (or file names) and WAV samples.
+registerVoicebankLoader({
+	id: 'utau',
+	detect: (paths) => paths.some((p) => p.toLowerCase().endsWith('.wav')),
+	build: buildVoicebank
+});
