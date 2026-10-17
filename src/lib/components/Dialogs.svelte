@@ -2,6 +2,7 @@
 	import Dialog from './Dialog.svelte';
 	import LyricDoctor from './LyricDoctor.svelte';
 	import { plugins } from '#lib/state/plugins.svelte';
+	import { playback } from '#lib/state/playback.svelte';
 	import { splitLyrics } from '#lib/core/lyrics';
 	import { edit, file } from '#lib/state/commands';
 	import { getEngine } from '#lib/state/engine';
@@ -114,6 +115,13 @@
 		</div>
 		<label class="check"
 			><input type="checkbox" bind:checked={settings.data.followPlayhead} /> Follow playhead while playing</label
+		>
+		<label class="check"
+			><input
+				type="checkbox"
+				bind:checked={settings.data.backgroundRender}
+				onchange={() => playback.settingsChanged()}
+			/> Keep rendering while paused (off: rendering stops with playback and continues from the cache)</label
 		>
 		<label class="check"
 			><input type="checkbox" bind:checked={settings.data.showNoteNames} /> Show note names on long notes</label

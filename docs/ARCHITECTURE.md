@@ -135,6 +135,15 @@ result is identical however the song is cut into pieces, in whatever order it wa
 jumps; no whole-song peak search and nothing is re-rendered. Audio below the ceiling is untouched (gain exactly 1). A
 piece may be handed over once `LIMITER_LOOKAHEAD` of final audio exists after it. WAV export uses the same limiter.
 
+Edits made while playing (solo, mute, track volume, notes…) are picked up by `followEdits` in the transport tick: once
+the changes settle (150 ms, at most 800 ms for a burst such as a dragged slider) a new render starts from the playhead,
+which reuses the engine's per-note cache. The old audio keeps playing until the new render has its lead at the point
+where the sound card is fed next, then the feed switches seamlessly (`feed` vs `run`). If the old audio runs out first,
+playback waits for the new render instead.
+
+By default an unfinished render stops when playback pauses (the cache keeps its work and playing again continues from
+it); the setting _Keep rendering while paused_ (`backgroundRender`) lets it finish in the background.
+
 Only one streaming backend gets this; several backends fall back to the batch path.
 Playback is not peak-normalised any more (the whole song is not known yet), it is limited instead (above).
 

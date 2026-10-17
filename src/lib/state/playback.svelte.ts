@@ -31,6 +31,9 @@ const MIN_CHUNK_MS = 20;
  * playhead, so that a single finished note does not make it stutter forward one note at a time.
  */
 const LEAD_MS = 2000;
+/** An edit made under playback is re-rendered once the changes stop for this long (or after EDIT_MAX_WAIT_MS). */
+const EDIT_SETTLE_MS = 150;
+const EDIT_MAX_WAIT_MS = 800;
 
 class PlaybackState {
 	status = $state<RenderStatus>('idle');
@@ -68,6 +71,11 @@ class PlaybackState {
 	private completed = false;
 	/** Waiting for the render to get LEAD_MS ahead of the playhead before going on. */
 	private holding = false;
+	private exporting = false;
+	/** The render the sound card is being fed from; differs from `run` while an edit is being re-rendered. */
+	private feed: RenderStream | null = null;
+	/** When the project last changed under playback (debounce), and when the first of those changes was. */
+	private editSeen = { key: '', at: 0, first: 0 };
 
 	/** The progressive render that is going on (or was the last one). */
 	get stream(): RenderStream | null {
@@ -244,6 +252,7 @@ class PlaybackState {
 		this.playing = true;
 		this.buffering = false;
 		this.holding = true;
+		this.feed = this.run?.stream ?? null;
 		this.startedFrom = fromMs;
 		this.positionMs = fromMs;
 		this.nextSample = Math.floor((fromMs / 1000) * SAMPLE_RATE);
@@ -253,11 +262,48 @@ class PlaybackState {
 		this.pump();
 	}
 
+	/** What of `stream` can be handed to the sound card from `fromSample` on. */
+	private availability(stream: RenderStream, fromSample: number, endSample: number) {
+		// Limiting a sample needs a little final audio after it too.
+		const readyMs = stream.readyUntil((fromSample / SAMPLE_RATE) * 1000);
+		const whole = stream.complete || (stream.durationMs > 0 && readyMs >= stream.durationMs - 1);
+		const lastSample = Math.min(endSample, Math.floor((stream.durationMs / 1000) * SAMPLE_RATE));
+		const playable = Math.min(
+			endSample,
+			Math.floor((readyMs / 1000) * SAMPLE_RATE) - (whole ? 0 : LIMITER_LOOKAHEAD)
+		);
+		const lead = Math.min(Math.floor((LEAD_MS / 1000) * SAMPLE_RATE), endSample - fromSample);
+		return {
+			playable,
+			hasLead: playable - fromSample >= lead || (whole && playable >= lastSample)
+		};
+	}
+
+	/**
+	 * The project changed while playing (solo, volume, notes…): render it again from the playhead
+	 * and, once the new render has a lead, carry on from it. The old audio plays until then.
+	 */
+	private followEdits() {
+		const key = this.key();
+		if (!this.run || key === this.renderedKey) {
+			this.editSeen.first = 0;
+			return;
+		}
+		const t = performance.now();
+		if (key !== this.editSeen.key) this.editSeen = { key, at: t, first: this.editSeen.first || t };
+		// Wait for a burst of changes (a slider being dragged) to settle, but not for ever.
+		if (t - this.editSeen.at < EDIT_SETTLE_MS && t - this.editSeen.first < EDIT_MAX_WAIT_MS) return;
+		this.editSeen.first = 0;
+		this.ensureRender(this.positionMs);
+	}
+
 	/** Hands the next ready pieces of the song to the sound card and moves the playhead. */
 	private pump() {
 		const ctx = this.ctx;
-		const stream = this.run?.stream;
-		if (!ctx || !stream || !this.playing) return;
+		if (!ctx || !this.run || !this.playing) return;
+		this.followEdits();
+		const run = this.run;
+		if (!run) return;
 		const now = ctx.currentTime;
 		const endSample = Math.floor((this.endMs() / 1000) * SAMPLE_RATE);
 
@@ -266,24 +312,21 @@ class PlaybackState {
 			this.positionMs = Math.max(this.positionMs, (this.nextSample / SAMPLE_RATE) * 1000);
 			this.nextCtx = now + 0.03;
 		}
+		run.stream.focus((this.nextSample / SAMPLE_RATE) * 1000);
 
-		// Audio can be handed over up to here: limiting a sample needs a little final audio after it too.
-		const readyMs = stream.readyUntil((this.nextSample / SAMPLE_RATE) * 1000);
-		const whole = stream.complete || (stream.durationMs > 0 && readyMs >= stream.durationMs - 1);
-		const lastSample = Math.min(endSample, Math.floor((stream.durationMs / 1000) * SAMPLE_RATE));
-		const playable = Math.min(
-			endSample,
-			Math.floor((readyMs / 1000) * SAMPLE_RATE) - (whole ? 0 : LIMITER_LOOKAHEAD)
-		);
+		// A newer render takes over as soon as it has a lead at the point where the sound card is fed next.
+		if (
+			this.feed !== run.stream &&
+			(!this.feed || this.availability(run.stream, this.nextSample, endSample).hasLead)
+		) {
+			this.feed = run.stream;
+		}
+		const stream = this.feed ?? run.stream;
+		const { playable, hasLead } = this.availability(stream, this.nextSample, endSample);
 
 		let starving = false;
 		if (this.holding && this.nextSample < endSample) {
-			const lead = Math.min(
-				Math.floor((LEAD_MS / 1000) * SAMPLE_RATE),
-				endSample - this.nextSample
-			);
-			if (playable - this.nextSample >= lead || (whole && playable >= lastSample))
-				this.holding = false;
+			if (hasLead) this.holding = false;
 			else starving = true;
 		}
 		while (!starving && this.nextCtx - now < AHEAD_S && this.nextSample < endSample) {
@@ -302,8 +345,11 @@ class PlaybackState {
 		const playedMs = (this.nextSample / SAMPLE_RATE) * 1000 - queued * 1000;
 		this.positionMs = Math.max(this.positionMs, this.startedFrom, playedMs);
 
-		// Out of audio to play: from now on wait for a proper lead.
-		if (starving && queued < 0.04 && this.nextSample < endSample) this.holding = true;
+		// Out of audio to play: from now on wait for a proper lead. If a newer render exists, it is the one to wait for.
+		if (starving && queued < 0.04 && this.nextSample < endSample) {
+			this.holding = true;
+			this.feed = run.stream;
+		}
 		const wasBuffering = this.buffering;
 		this.buffering = this.holding && queued < 0.04 && this.nextSample < endSample;
 		if (this.buffering !== wasBuffering && this.run) this.syncStream(this.run);
@@ -358,6 +404,15 @@ class PlaybackState {
 		this.halt();
 		this.playing = false;
 		this.buffering = false;
+		this.settingsChanged();
+	}
+
+	/** Without background rendering an unfinished render stops when nothing is playing (the cache keeps its work). */
+	settingsChanged() {
+		if (this.playing || this.exporting || this.completed || settings.data.backgroundRender) return;
+		if (!this.run) return;
+		this.cancelRender();
+		this.message = '';
 	}
 
 	stop() {
@@ -489,7 +544,12 @@ class PlaybackState {
 	// ---- export ---------------------------------------------------------------------
 
 	async exportWav() {
-		if ((this.isStale || !this.completed) && !(await this.render())) return;
+		this.exporting = true;
+		try {
+			if ((this.isStale || !this.completed) && !(await this.render())) return;
+		} finally {
+			this.exporting = false;
+		}
 		const source = this.buffer!.getChannelData(0);
 		// Playback is limited on the fly; the file gets the same limiter, and quiet mixes are brought up first.
 		let peak = 0;

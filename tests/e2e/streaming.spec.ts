@@ -19,6 +19,9 @@ async function longSong(app: App, count: number) {
 	);
 }
 
+/** Rendering goes on while paused only when asked to (it is off by default). */
+const renderInBackground = (app: App) => app.eval((w) => (w.settings.data.backgroundRender = true));
+
 const done = (app: App) =>
 	app.eval((w) => {
 		const s = w.playback.stream;
@@ -113,6 +116,7 @@ test.describe('progressive rendering', () => {
 	});
 
 	test('what was rendered out of order has no holes', async ({ app }) => {
+		await renderInBackground(app);
 		await longSong(app, 120);
 		// Start in the middle, then jump around while it renders.
 		await app.eval((w) => {
@@ -166,6 +170,7 @@ test.describe('progressive rendering', () => {
 	});
 
 	test('pressing a piano key while the song renders does not disturb it', async ({ app }) => {
+		await renderInBackground(app);
 		await longSong(app, 150);
 		await app.eval((w) => void w.playback.play());
 		await expect.poll(() => done(app), { timeout: 20_000 }).toBeGreaterThan(0.05);
@@ -176,9 +181,10 @@ test.describe('progressive rendering', () => {
 		expect(await app.eval((w) => w.playback.unknownLyrics.size)).toBe(0);
 	});
 
-	test('pausing keeps the render going and resuming continues from the same place', async ({
+	test('with background rendering on, pausing keeps the render going and resuming continues from the same place', async ({
 		app
 	}) => {
+		await renderInBackground(app);
 		await longSong(app, 200);
 		await app.eval((w) => void w.playback.play());
 		await expect
@@ -283,5 +289,79 @@ test.describe('progressive rendering', () => {
 		const loud = await play();
 		expect(await rawPeak()).toBeGreaterThan(1);
 		expect(loud).toBeLessThan(0.9);
+	});
+
+	test('changing a track under playback is heard without pausing', async ({ app }) => {
+		await app.eval((w) => {
+			w.project.load({ name: 'Edits', notes: [] });
+			w.project.addNote({ tick: 0, length: 4800, pitch: 60, lyric: 'a' });
+			w.project.addTrack();
+			w.project.addNote({ tick: 0, length: 4800, pitch: 67, lyric: 'a' });
+			w.project.clearSelection();
+		});
+		// Both tracks sing: remember how loud the mix is.
+		const level = (from: number, ms: number) =>
+			app.eval(
+				(w, [a, b]) => {
+					const pcm = w.playback.stream.buffer;
+					const from = Math.floor((a / 1000) * 44100);
+					const to = Math.floor(((a + b) / 1000) * 44100);
+					let sum = 0;
+					for (let i = from; i < to; i++) sum += pcm[i] * pcm[i];
+					return Math.sqrt(sum / (to - from));
+				},
+				[from, ms]
+			);
+		await app.eval((w) => void w.playback.play());
+		await expect
+			.poll(() => app.eval((w) => w.playback.positionMs), { timeout: 20_000 })
+			.toBeGreaterThan(500);
+		const before = await level(1500, 500);
+		expect(before).toBeGreaterThan(0.001);
+
+		// Solo the first track while the song plays: no pause, the render follows.
+		await app.eval((w) => w.project.updateTrack(w.project.tracks[0].id, { solo: true }));
+		expect(await app.eval((w) => w.playback.playing)).toBe(true);
+		await expect.poll(() => app.eval((w) => w.playback.isStale), { timeout: 5000 }).toBe(false);
+		// The new render replaced what plays: the soloed track alone is quieter than both together.
+		await expect.poll(() => level(1500, 500), { timeout: 20_000 }).toBeLessThan(before * 0.85);
+		// And the transport carried on meanwhile.
+		const at = await app.eval((w) => w.playback.positionMs);
+		await expect
+			.poll(() => app.eval((w) => w.playback.positionMs), { timeout: 10_000 })
+			.toBeGreaterThan(at + 200);
+
+		// Volume of a track: also taken up while playing.
+		await app.eval((w) => w.project.updateTrack(w.project.tracks[0].id, { volume: 20 }));
+		await expect.poll(() => level(2500, 500), { timeout: 20_000 }).toBeLessThan(before * 0.5);
+		await app.eval((w) => w.playback.stop());
+	});
+
+	test('rendering stops with playback unless background rendering is on', async ({ app }) => {
+		await longSong(app, 400);
+		expect(await app.eval((w) => w.settings.data.backgroundRender)).toBe(false);
+		await app.eval((w) => void w.playback.play());
+		await expect.poll(() => done(app), { timeout: 20_000 }).toBeGreaterThan(0.02);
+		await app.eval((w) => w.playback.pause());
+		await app.page.waitForTimeout(600);
+		const stopped = await done(app);
+		await app.page.waitForTimeout(1500);
+		expect(await done(app)).toBe(stopped);
+		expect(await app.eval((w) => w.playback.busy)).toBe(false);
+		// Playing again picks up from the cache and carries on.
+		await app.eval((w) => void w.playback.play());
+		await expect
+			.poll(() => app.eval((w) => w.playback.positionMs), { timeout: 20_000 })
+			.toBeGreaterThan(1000);
+		await app.eval((w) => w.playback.pause());
+
+		// With the option on, it goes on while paused.
+		await app.eval((w) => (w.settings.data.backgroundRender = true));
+		await app.eval((w) => void w.playback.play());
+		await expect.poll(() => done(app), { timeout: 20_000 }).toBeGreaterThan(0.02);
+		await app.eval((w) => w.playback.pause());
+		const paused = await done(app);
+		await expect.poll(() => done(app), { timeout: 20_000 }).toBeGreaterThan(paused);
+		await app.eval((w) => w.playback.stop());
 	});
 });
