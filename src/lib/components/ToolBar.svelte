@@ -5,6 +5,7 @@
 	import { view, type Tool } from '#lib/state/view.svelte';
 	import { project } from '#lib/state/project.svelte';
 	import { trackMenu } from '#lib/state/menus';
+	import type { MenuItem } from '#lib/state/ui.svelte';
 	import { voicebank } from '#lib/state/voicebank.svelte';
 
 	const TOOLS: { id: Tool; icon: IconName; label: string; key: string }[] = [
@@ -17,6 +18,107 @@
 	const GRIDS = [1, 2, 4, 8, 12, 16, 24, 32, 48, 64];
 	const gridLabel = (d: number) =>
 		d === 12 ? '1/8T' : d === 24 ? '1/16T' : d === 48 ? '1/32T' : `1/${d}`;
+
+	const LONG_PRESS_MS = 450;
+	let pressTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A long-press that opened a flyout must not also select the tool when the finger lifts. */
+	let suppressClick = false;
+
+	const hasFlyout = (id: Tool) => id === 'pitch' || id === 'erase';
+
+	function pitchFlyout(): MenuItem[] {
+		const { pitchMode: scope, pitchStyle: style } = settings.data;
+		const entry = (
+			label: string,
+			hint: string,
+			icon: string,
+			nextScope: typeof scope,
+			nextStyle: typeof style
+		): MenuItem => ({
+			label,
+			hint,
+			icon,
+			checked: scope === nextScope && style === nextStyle,
+			action: () => {
+				settings.data.pitchMode = nextScope;
+				settings.data.pitchStyle = nextStyle;
+				view.setTool('pitch');
+			}
+		});
+		return [
+			entry('Freehand · whole track', 'drag to draw', 'curve', 'track', 'freehand'),
+			entry('Points · whole track', 'click to place', 'dots', 'track', 'points'),
+			entry('Freehand · single notes', 'stored on notes', 'pencil', 'note', 'freehand'),
+			entry('Points · single notes', 'stored on notes', 'music', 'note', 'points')
+		];
+	}
+
+	function eraserFlyout(): MenuItem[] {
+		const entry = (
+			label: string,
+			icon: string,
+			mode: typeof settings.data.eraserMode
+		): MenuItem => ({
+			label,
+			icon,
+			checked: settings.data.eraserMode === mode,
+			action: () => {
+				settings.data.eraserMode = mode;
+				view.setTool('erase');
+			}
+		});
+		return [
+			entry('Erase notes and pitch', 'eraser', 'all'),
+			entry('Erase notes only', 'music', 'notes'),
+			entry('Erase pitch only', 'curve', 'pitch')
+		];
+	}
+
+	function openFlyout(button: Element, id: Tool, guard: boolean) {
+		if (ui.menu) return;
+		const r = button.getBoundingClientRect();
+		ui.openMenu({
+			x: r.left,
+			y: r.bottom + 6,
+			items: id === 'pitch' ? pitchFlyout() : eraserFlyout(),
+			guard
+		});
+	}
+
+	function toolDown(e: PointerEvent, id: Tool) {
+		clearTimeout(pressTimer);
+		suppressClick = false;
+		if (!hasFlyout(id) || e.pointerType === 'mouse') return;
+		const button = e.currentTarget as Element;
+		pressTimer = setTimeout(() => {
+			suppressClick = true;
+			navigator.vibrate?.(10);
+			openFlyout(button, id, true);
+		}, LONG_PRESS_MS);
+	}
+
+	function toolContext(e: MouseEvent, id: Tool) {
+		if (!hasFlyout(id)) return;
+		e.preventDefault();
+		clearTimeout(pressTimer);
+		suppressClick = true;
+		openFlyout(
+			e.currentTarget as Element,
+			id,
+			e instanceof PointerEvent && e.pointerType !== 'mouse'
+		);
+	}
+
+	function toolClick(id: Tool) {
+		if (suppressClick) {
+			suppressClick = false;
+			return;
+		}
+		view.setTool(id);
+	}
+
+	const toolIcon = (t: (typeof TOOLS)[number]): IconName =>
+		t.id === 'pitch' && settings.data.pitchStyle === 'points' ? 'dots' : t.icon;
 
 	let { zoom }: { zoom: (fx: number, fy: number) => void } = $props();
 
@@ -33,28 +135,22 @@
 			<button
 				class="icon-btn"
 				class:active={view.tool === t.id}
-				title="{t.label} ({t.key})"
+				title={hasFlyout(t.id)
+					? `${t.label} (${t.key}) — hold or right-click for more`
+					: `${t.label} (${t.key})`}
 				aria-label={t.label}
 				aria-pressed={view.tool === t.id}
-				onclick={() => view.setTool(t.id)}
+				aria-haspopup={hasFlyout(t.id) ? 'menu' : undefined}
+				onpointerdown={(e) => toolDown(e, t.id)}
+				onpointerup={() => clearTimeout(pressTimer)}
+				onpointercancel={() => clearTimeout(pressTimer)}
+				oncontextmenu={(e) => toolContext(e, t.id)}
+				onclick={() => toolClick(t.id)}
 			>
-				<Icon name={t.icon} />
+				<Icon name={toolIcon(t)} />
 			</button>
 		{/each}
 	</div>
-
-	{#if view.tool === 'pitch'}
-		<button
-			class="btn mode-chip"
-			title="Pitch editing: one curve per track, or points on single notes (Settings)"
-			aria-label="Pitch mode: {settings.data.pitchMode === 'track' ? 'whole track' : 'single note'}"
-			onclick={() =>
-				(settings.data.pitchMode = settings.data.pitchMode === 'track' ? 'note' : 'track')}
-		>
-			<span class="swatch" style:background={activeTrack?.color}></span>
-			{settings.data.pitchMode === 'track' ? 'Track' : 'Note'}
-		</button>
-	{/if}
 
 	<div class="group">
 		<label class="grid" title="Grid resolution">
@@ -146,6 +242,10 @@
 </div>
 
 <style>
+	.icon-btn {
+		-webkit-touch-callout: none;
+		user-select: none;
+	}
 	.toolbar {
 		display: flex;
 		align-items: center;
@@ -207,15 +307,6 @@
 		padding: 0 12px;
 		border-radius: 12px;
 		max-width: 180px;
-	}
-	.mode-chip {
-		min-height: 36px;
-		padding: 0 12px;
-		border-radius: 12px;
-		flex: none;
-	}
-	.compact .mode-chip {
-		min-height: 44px;
 	}
 	.swatch {
 		width: 10px;

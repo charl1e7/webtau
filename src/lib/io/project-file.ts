@@ -41,7 +41,7 @@ function normalizeCurve(raw: unknown): Track['pitchCurve'] {
 						.map((p) => ({ tick: p.tick as number, pitch: p.pitch as number }))
 				: []
 		)
-		.filter((stroke) => stroke.length >= 2);
+		.filter((stroke) => stroke.length >= 1);
 }
 
 export function parseProject(text: string): ProjectData {

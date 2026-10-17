@@ -4,6 +4,10 @@ export type PlaybackStart = 'cursor' | 'start';
 export type AnalysisQuality = 'accurate' | 'fast';
 /** 'track': one pitch curve drawn across a whole track; 'note': pitch points on single notes. */
 export type PitchMode = 'track' | 'note';
+/** 'freehand': drag to draw; 'points': click to place points that can be dragged. */
+/** What the eraser removes: everything it touches, only notes, or only pitch. */
+export type EraserMode = 'all' | 'notes' | 'pitch';
+export type PitchStyle = 'freehand' | 'points';
 
 export interface SettingsData {
 	defaultLyric: string;
@@ -17,6 +21,8 @@ export interface SettingsData {
 	backgroundAnalysis: boolean;
 	showNoteNames: boolean;
 	pitchMode: PitchMode;
+	pitchStyle: PitchStyle;
+	eraserMode: EraserMode;
 	/** UI scale for touch targets: 'auto' picks by input device. */
 	touchMode: 'auto' | 'on' | 'off';
 	theme: 'auto' | 'dark' | 'light';
@@ -40,6 +46,8 @@ const DEFAULTS: SettingsData = {
 	backgroundAnalysis: false,
 	showNoteNames: true,
 	pitchMode: 'track',
+	pitchStyle: 'freehand',
+	eraserMode: 'all',
 	touchMode: 'auto',
 	theme: 'dark',
 	leftWidth: 308,

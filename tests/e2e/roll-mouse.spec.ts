@@ -109,7 +109,10 @@ test.describe('piano roll with a mouse', () => {
 		app,
 		page
 	}) => {
-		await app.eval((w) => (w.settings.data.pitchMode = 'note'));
+		await app.eval((w) => {
+			w.settings.data.pitchMode = 'note';
+			w.settings.data.pitchStyle = 'points';
+		});
 		await app.setNotes([{ tick: 0, length: 960, pitch: 60 }]);
 		const n = await app.point(100, 60);
 		await page.mouse.click(n.x, n.y);

@@ -74,6 +74,11 @@ export interface Rect {
 	y1: number;
 }
 
+interface PointRefLike {
+	stroke: number;
+	index: number;
+}
+
 export interface Frame {
 	w: number;
 	h: number;
@@ -108,6 +113,12 @@ export interface Frame {
 		active: boolean;
 		strokes: readonly PitchStroke[];
 	}[];
+	/** Editable points of the active track's curve (track pitch mode, pitch tool). */
+	curveHandles: {
+		color: string;
+		strokes: readonly PitchStroke[];
+		selected: PointRefLike | null;
+	} | null;
 	/** The stroke that is being drawn right now. */
 	liveStroke: { color: string; pts: readonly CurvePoint[] } | null;
 	/** Whether pitch points on single notes are the thing being edited. */
@@ -455,6 +466,28 @@ function drawTrackCurves(ctx: CanvasRenderingContext2D, f: Frame) {
 		}
 	}
 	if (f.liveStroke) line(f.liveStroke.pts, f.liveStroke.color, 3, 1);
+	if (f.curveHandles) {
+		const { color, strokes, selected } = f.curveHandles;
+		const r = f.touch ? 8 : 5;
+		strokes.forEach((stroke, si) =>
+			stroke.forEach((pt, i) => {
+				const active = selected?.stroke === si && selected.index === i;
+				ctx.beginPath();
+				ctx.arc(
+					xAt(f, pt.tick),
+					rowTop(f, pt.pitch) + f.keyH / 2,
+					active ? r + 2 : r,
+					0,
+					Math.PI * 2
+				);
+				ctx.fillStyle = active ? f.theme.accent : f.theme.noteText;
+				ctx.fill();
+				ctx.lineWidth = 2;
+				ctx.strokeStyle = tint(color, 0.15);
+				ctx.stroke();
+			})
+		);
+	}
 	ctx.globalAlpha = 1;
 	ctx.lineWidth = 1;
 }

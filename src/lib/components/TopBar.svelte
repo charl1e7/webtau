@@ -274,10 +274,15 @@
 			grid-template-columns: auto minmax(0, 1fr) auto;
 			gap: 4px;
 		}
+		/* The pill (button + clock + borders) must stay inside the 50px bar. */
 		.transport {
 			justify-self: center;
-			padding: 4px 12px 4px 5px;
+			padding: 3px 12px 3px 4px;
 			gap: 6px;
+		}
+		.play {
+			width: 38px;
+			height: 38px;
 		}
 		.clock {
 			min-width: 52px;
