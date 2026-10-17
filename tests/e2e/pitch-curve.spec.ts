@@ -1,7 +1,6 @@
-import { expect, test } from './fixtures';
+import { expect, test, type App } from './fixtures';
 
-const strokes = (app: { eval: Function }) =>
-	app.eval((w: any) => w.project.tracks.map((t: any) => t.pitchCurve.length)) as Promise<number[]>;
+const strokes = (app: App) => app.eval((w) => w.project.tracks.map((t) => t.pitchCurve.length));
 
 test.describe('track pitch curve', () => {
 	test.beforeEach(async ({ app }) => {
