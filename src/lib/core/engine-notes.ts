@@ -1,5 +1,6 @@
 import type { EngineNote } from '#lib/engine/bridge';
 import { compilePitch } from './pitch';
+import { overlayFor, strokesToMs, type MsStroke } from './pitch-curve';
 import type { TempoMap } from './tempo';
 import type { Note, Track } from './types';
 
@@ -23,6 +24,9 @@ export function toEngineNotes(
 	const byId = new Map(tracks.map((t, i) => [t.id, { track: t, index: i }]));
 	const audible = source.filter((n) => isAudible(byId.get(n.track)?.track, tracks));
 	const sorted = [...audible].sort((a, b) => a.tick - b.tick || a.pitch - b.pitch);
+	const curves = new Map<string, MsStroke[]>();
+	for (const t of tracks)
+		if (t.pitchCurve?.length) curves.set(t.id, strokesToMs(t.pitchCurve, tempoMap));
 	const notes = sorted.map((n) => {
 		const start = tempoMap.tickToMs(n.tick);
 		const duration = tempoMap.tickToMs(n.tick + n.length) - start;
@@ -32,7 +36,11 @@ export function toEngineNotes(
 			pitch: n.pitch,
 			start_time: start,
 			duration,
-			pitchbend: compilePitch(n, duration),
+			pitchbend: compilePitch(
+				n,
+				duration,
+				curves.has(n.track) ? overlayFor(curves.get(n.track)!, start, duration, n.pitch) : null
+			),
 			flags: n.flags,
 			velocity: n.velocity,
 			volume: (n.volume * (info?.track.volume ?? 100)) / 100,

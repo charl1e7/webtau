@@ -28,6 +28,16 @@ export interface Vibrato {
 	phase: number;
 }
 
+/** A point of a hand-drawn pitch curve that belongs to a whole track. */
+export interface CurvePoint {
+	tick: number;
+	/** Absolute pitch in (fractional) semitones, same scale as MIDI note numbers. */
+	pitch: number;
+}
+
+/** One continuous stroke of the pitch pen: points sorted by tick, at least two. */
+export type PitchStroke = CurvePoint[];
+
 export interface Track {
 	id: string;
 	name: string;
@@ -37,6 +47,11 @@ export interface Track {
 	solo: boolean;
 	/** Mix level in percent. */
 	volume: number;
+	/**
+	 * Pitch drawn across the whole track (the "track" pitch mode). Where a stroke
+	 * covers a note, the note follows the stroke instead of its own pitch.
+	 */
+	pitchCurve: PitchStroke[];
 }
 
 export const DEFAULT_TRACK_ID = 'track-1';

@@ -1,3 +1,4 @@
+import type { PitchOverlay } from './pitch-curve';
 import type { Note, PitchPoint, PitchShape, Vibrato } from './types';
 
 /** Resolution of the contour sent to the engine, in milliseconds. */
@@ -66,18 +67,19 @@ export function vibratoValueAt(v: Vibrato, x: number, durationMs: number): numbe
  */
 export function compilePitch(
 	note: Pick<Note, 'pitchPoints' | 'vibrato'>,
-	durationMs: number
+	durationMs: number,
+	overlay: PitchOverlay | null = null
 ): EnginePitchPoint[] {
 	const sorted = sortPoints(note.pitchPoints);
 	const vib = note.vibrato && note.vibrato.depth !== 0 ? note.vibrato : null;
-	if (!sorted.length && !vib) return [];
+	if (!sorted.length && !vib && !overlay) return [];
 
 	const out: EnginePitchPoint[] = [];
 	const push = (offset: number, value: number) => {
 		out.push({ offset: round(offset), value: round(value) });
 	};
 
-	if (!vib) {
+	if (!vib && !overlay) {
 		for (let i = 0; i < sorted.length; i++) {
 			const a = sorted[i];
 			push(a.x, a.y);
@@ -93,12 +95,20 @@ export function compilePitch(
 		return out;
 	}
 
-	const from = sorted.length ? Math.min(0, sorted[0].x) : 0;
-	const to = Math.max(durationMs, sorted.length ? sorted[sorted.length - 1].x : 0);
-	for (let x = from; x < to; x += STEP_MS) {
-		push(x, curveValueAt(sorted, x) + vibratoValueAt(vib, x, durationMs));
-	}
-	push(to, curveValueAt(sorted, to) + vibratoValueAt(vib, to, durationMs));
+	// Only a track curve: sample just the stretch that it bends.
+	const overlayOnly = !!overlay && !vib && !sorted.length;
+	const from = overlayOnly
+		? overlay!.from
+		: Math.min(0, sorted.length ? sorted[0].x : 0, overlay?.from ?? 0);
+	const to = overlayOnly
+		? overlay!.to
+		: Math.max(durationMs, sorted.length ? sorted[sorted.length - 1].x : 0, overlay?.to ?? 0);
+	const total = (x: number) =>
+		curveValueAt(sorted, x) +
+		(vib ? vibratoValueAt(vib, x, durationMs) : 0) +
+		(overlay && x >= overlay.from && x <= overlay.to ? overlay.at(x) : 0);
+	for (let x = from; x < to; x += STEP_MS) push(x, total(x));
+	push(to, total(to));
 	return out;
 }
 

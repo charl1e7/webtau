@@ -257,6 +257,12 @@ export function trackMenu(): MenuItem[] {
 			action: () => project.updateTrack(active.id, { solo: !active.solo })
 		},
 		{
+			label: 'Clear pitch curve of active track',
+			disabled: !active.pitchCurve.length,
+			danger: true,
+			action: () => project.clearPitchCurve(active.id)
+		},
+		{
 			label: 'Rename active track…',
 			action: () => {
 				const name = prompt('Track name', active.name)?.trim();

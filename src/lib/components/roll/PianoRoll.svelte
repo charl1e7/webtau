@@ -114,6 +114,21 @@
 			tool: view.tool,
 			touch: ui.touch,
 			selectedPoint: c.selectedPoint,
+			trackCurves: project.tracks
+				.filter((t) => t.pitchCurve.length)
+				.map((t) => ({
+					color: t.color,
+					muted: !isAudible(t, project.tracks),
+					active: t.id === project.activeTrack,
+					strokes: t.pitchCurve
+				})),
+			liveStroke: c.liveStroke
+				? {
+						color: project.tracks.find((t) => t.id === c.liveStroke!.track)?.color ?? '#ffffff',
+						pts: c.liveStroke.pts
+					}
+				: null,
+			notePitchMode: settings.data.pitchMode === 'note',
 			rubber: c.rubber,
 			guideTick: c.guideTick,
 			pressedKey: c.pressedKey,

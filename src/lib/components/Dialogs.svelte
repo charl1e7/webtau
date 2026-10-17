@@ -116,6 +116,19 @@
 			><input type="checkbox" bind:checked={settings.data.showNoteNames} /> Show note names on long notes</label
 		>
 
+		<h3>Pitch</h3>
+		<div class="field">
+			<label for="s-pitch">Pitch editing</label>
+			<select id="s-pitch" bind:value={settings.data.pitchMode}>
+				<option value="track">Whole track — draw one curve over all notes (default)</option>
+				<option value="note">Single note — place pitch points on each note</option>
+			</select>
+			<span class="hint"
+				>Pick the pitch tool (curve icon) and drag across the roll. Each track keeps its own curve
+				in its colour; the eraser removes parts of it.</span
+			>
+		</div>
+
 		<h3>Appearance</h3>
 		<div class="field">
 			<label for="s-theme">Theme</label>

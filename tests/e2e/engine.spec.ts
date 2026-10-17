@@ -38,6 +38,27 @@ test.describe('audio engine in the browser', () => {
 		expect(await app.eval((w) => w.playback.message)).toMatch(/Rendered 1, reused 2/);
 	});
 
+	test('a track pitch curve re-renders only the notes it touches', async ({ app, page }) => {
+		await app.setNotes([
+			{ tick: 0, pitch: 60, lyric: 'ka' },
+			{ tick: 480, pitch: 62, lyric: 'sa' },
+			{ tick: 960, pitch: 64, lyric: 'mi' }
+		]);
+		await app.eval((w) => w.playback.render());
+		expect(await app.eval((w) => w.playback.message)).toMatch(/Rendered 3/);
+		await app.eval((w) =>
+			w.project.addPitchStroke(w.project.tracks[0].id, [
+				{ tick: 500, pitch: 62.5 },
+				{ tick: 700, pitch: 63 },
+				{ tick: 900, pitch: 62 }
+			])
+		);
+		await app.eval((w) => w.playback.render());
+		expect(await app.eval((w) => w.playback.message)).toMatch(/Rendered 1, reused 2/);
+		expect(await app.eval((w) => w.playback.status)).toBe('ready');
+		void page;
+	});
+
 	test('lyrics that are not in the voicebank are flagged', async ({ app }) => {
 		await app.setNotes([
 			{ tick: 0, pitch: 60, lyric: 'ka' },

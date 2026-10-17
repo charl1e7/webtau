@@ -30,7 +30,10 @@
 - **Piano roll for desktop and touch** — select / draw / pitch / erase tools, drag to move, grab either
   edge to stretch (large handles on touch), rubber-band selection, copy / paste / duplicate, snapping
   (incl. triplets), zoom with wheel or pinch, long-press / right-click context menus, undo / redo.
-- **Pitch** — draggable pitch points with linear / smooth shapes, auto-portamento, vibrato with
+- **Pitch, two modes** (Settings → Pitch; the pitch tool also has a quick switch). _Whole track_ (default):
+  drag with the pitch tool to draw one curve across all notes of the active track — each track keeps its
+  own curve in its colour, redrawing overwrites what is underneath, the eraser cuts it, and it is baked
+  into per-note points on UST export. _Single note_: draggable pitch points with linear / smooth shapes, auto-portamento, vibrato with
   fade-in/out, per-note flags (`B`reathiness, `t` pitch offset), velocity, volume, modulation.
 - **Import / export** — UST (import & export, pitch curves, vibrato, tempo changes), MIDI (import with
   track picker & lyrics, export), project files (`.webtau.json`), WAV export.

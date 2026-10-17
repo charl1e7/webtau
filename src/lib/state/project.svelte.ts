@@ -3,10 +3,13 @@ import { History } from '#lib/core/history';
 import { TempoMap } from '#lib/core/tempo';
 import { cloneNote, createNote, createTrack, TRACK_COLORS } from '#lib/core/music';
 import { pasteNotes, sortNotes } from '#lib/core/ops';
+import { insertStroke } from '#lib/core/pitch-curve';
 import {
 	DEFAULT_TRACK_ID,
 	PPQ,
+	type CurvePoint,
 	type Note,
+	type PitchStroke,
 	type ProjectData,
 	type TempoChange,
 	type TimeSignature,
@@ -322,6 +325,28 @@ export class ProjectState {
 		this.changed();
 	}
 
+	/**
+	 * Replaces the pitch curve of a track. Pass `record: false` for the follow-up
+	 * steps of a drag that already has its undo step.
+	 */
+	setPitchCurve(id: string, pitchCurve: PitchStroke[], record = true) {
+		if (record) this.record();
+		this.tracks = this.tracks.map((t) => (t.id === id ? { ...t, pitchCurve } : t));
+		this.changed();
+	}
+
+	/** Adds a hand-drawn stroke to a track's pitch curve. */
+	addPitchStroke(id: string, points: readonly CurvePoint[]) {
+		const track = this.tracks.find((t) => t.id === id);
+		if (!track) return;
+		const next = insertStroke(track.pitchCurve, points);
+		if (next.length || track.pitchCurve.length) this.setPitchCurve(id, next);
+	}
+
+	clearPitchCurve(id: string) {
+		if (this.tracks.find((t) => t.id === id)?.pitchCurve.length) this.setPitchCurve(id, []);
+	}
+
 	/** Deletes a track together with its notes. The last track cannot be removed. */
 	removeTrack(id: string) {
 		if (this.tracks.length < 2) return;
@@ -377,7 +402,13 @@ export class ProjectState {
 			if (!raw) return false;
 			const data = JSON.parse(raw) as ProjectData;
 			if (!Array.isArray(data.notes) || !data.notes.length) return false;
-			this.load({ ...data, notes: data.notes.map((n) => createNote({ ...n })) });
+			this.load({
+				...data,
+				tracks: data.tracks?.map((t, i) =>
+					createTrack(i, { ...t, pitchCurve: t.pitchCurve ?? [] })
+				),
+				notes: data.notes.map((n) => createNote({ ...n }))
+			});
 			return true;
 		} catch {
 			return false;

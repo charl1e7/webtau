@@ -7,7 +7,8 @@ import {
 	noteEnd
 } from '#lib/core/music';
 import { moveNotes, notesInRange } from '#lib/core/ops';
-import { MAX_PITCH, MIN_NOTE_TICKS, MIN_PITCH, type Note } from '#lib/core/types';
+import { curveAt, eraseRange } from '#lib/core/pitch-curve';
+import { MAX_PITCH, MIN_NOTE_TICKS, MIN_PITCH, type CurvePoint, type Note } from '#lib/core/types';
 import { emptyMenu, noteMenu, rulerMenu } from '#lib/state/menus';
 import { playback } from '#lib/state/playback.svelte';
 import { project } from '#lib/state/project.svelte';
@@ -52,7 +53,8 @@ type Gesture =
 			grabId: string;
 	  }
 	| { kind: 'draw'; id: string; tick0: number }
-	| { kind: 'erase'; erased: Set<string> }
+	| { kind: 'erase'; erased: Set<string>; curveRecorded: boolean }
+	| { kind: 'curve'; track: string; pts: CurvePoint[]; hit: Note | null }
 	| { kind: 'rubber'; base: ReadonlySet<string> }
 	| { kind: 'pan'; lastX: number; lastY: number; samples: { t: number; x: number; y: number }[] }
 	| { kind: 'pending'; x: number; y: number; noteId: string | null; onNote: boolean }
@@ -86,6 +88,8 @@ export class RollController {
 	/** Piano key currently held down (highlighted). */
 	pressedKey = $state<number | null>(null);
 	selectedPoint = $state<{ noteId: string; pointId: string } | null>(null);
+	/** The pitch stroke being drawn (track pitch mode). */
+	liveStroke = $state.raw<{ track: string; pts: CurvePoint[] } | null>(null);
 	editingLyricId = $state<string | null>(null);
 
 	keysW = $derived(ui.compact ? 44 : 56);
@@ -345,6 +349,11 @@ export class RollController {
 		if (!this.moved && Math.hypot(p.x - this.downAt.x, p.y - this.downAt.y) > (ui.touch ? 10 : 5)) {
 			this.moved = true;
 		}
+		const g = this.gesture;
+		if (g.kind === 'curve' && this.moved && e.getCoalescedEvents) {
+			// Fast strokes arrive in batches; keep every sample so the line stays smooth.
+			for (const q of e.getCoalescedEvents().slice(0, -1)) this.extendStroke(g, this.local(q));
+		}
 		this.applyMove(p, e.shiftKey, e.altKey);
 		this.updateAutoScroll(p);
 	};
@@ -373,6 +382,17 @@ export class RollController {
 			case 'erase': {
 				project.endGesture();
 				project.select([...project.selection].filter((id) => !g.erased.has(id)));
+				break;
+			}
+			case 'curve': {
+				this.liveStroke = null;
+				if (this.moved && g.pts.length > 1) {
+					project.addPitchStroke(g.track, g.pts);
+				} else if (g.hit) {
+					project.select([g.hit.id]);
+				} else if (!this.isDoubleTapPending) {
+					project.clearSelection();
+				}
 				break;
 			}
 			case 'rubber':
@@ -460,6 +480,7 @@ export class RollController {
 			// Abort whatever tentative edit has started and show the menu instead.
 			if (['move', 'resize', 'draw', 'point'].includes(g.kind)) project.cancelGesture();
 			this.gesture = null;
+			this.liveStroke = null;
 			navigator.vibrate?.(12);
 			this.openContextMenu(e.clientX, e.clientY, p, note, true);
 		}, LONG_PRESS_MS);
@@ -585,7 +606,7 @@ export class RollController {
 
 	private beginErase(p: { x: number; y: number }) {
 		project.beginGesture();
-		this.gesture = { kind: 'erase', erased: new Set() };
+		this.gesture = { kind: 'erase', erased: new Set(), curveRecorded: false };
 		this.eraseAt(p);
 	}
 
@@ -593,10 +614,34 @@ export class RollController {
 		const g = this.gesture;
 		if (g?.kind !== 'erase') return;
 		const hit = this.hitTest(p.x, p.y);
-		if (hit && !g.erased.has(hit.note.id)) {
-			g.erased.add(hit.note.id);
-			project.preview((notes) => notes.filter((n) => !g.erased.has(n.id)));
+		if (hit) {
+			if (!g.erased.has(hit.note.id)) {
+				g.erased.add(hit.note.id);
+				project.preview((notes) => notes.filter((n) => !g.erased.has(n.id)));
+			}
+			return;
 		}
+		if (settings.data.pitchMode === 'track') this.eraseCurveAt(p, g);
+	}
+
+	/** Cuts the drawn pitch curve out under the pointer (one undo step per drag). */
+	private eraseCurveAt(p: { x: number; y: number }, g: Extract<Gesture, { kind: 'erase' }>) {
+		const reach = Math.max(12, this.keyH);
+		const t0 = this.tickAtX(p.x - 8);
+		const t1 = this.tickAtX(p.x + 8);
+		const tick = this.tickAtX(p.x);
+		for (const track of project.tracks) {
+			const value = curveAt(track.pitchCurve, tick);
+			if (value === null) continue;
+			if (Math.abs(this.yAtPitch(value) - p.y) > reach) continue;
+			project.setPitchCurve(track.id, eraseRange(track.pitchCurve, t0, t1), !g.curveRecorded);
+			g.curveRecorded = true;
+		}
+	}
+
+	/** Canvas y of a (fractional) pitch, the middle of its row for whole numbers. */
+	yAtPitch(pitch: number) {
+		return this.rowTop(pitch) + this.keyH / 2;
 	}
 
 	private downPitch(
@@ -605,6 +650,11 @@ export class RollController {
 		hit: Note | null,
 		isDouble: boolean
 	) {
+		if (settings.data.pitchMode === 'track') {
+			this.liveStroke = null;
+			this.gesture = { kind: 'curve', track: project.activeTrack, pts: [this.curvePoint(p)], hit };
+			return;
+		}
 		const point = this.pointAt(p);
 		if (point) {
 			if (isDouble || e.button === 2) {
@@ -646,6 +696,19 @@ export class RollController {
 			project.clearSelection();
 			this.selectedPoint = null;
 		}
+	}
+
+	/** Where on the roll the pointer is, as a point of a pitch curve. */
+	private curvePoint(p: { x: number; y: number }): CurvePoint {
+		return { tick: Math.max(0, this.tickAtX(p.x)), pitch: this.pitchAtY(p.y) - 0.5 };
+	}
+
+	private extendStroke(g: Extract<Gesture, { kind: 'curve' }>, p: { x: number; y: number }) {
+		const pt = this.curvePoint(p);
+		const last = g.pts[g.pts.length - 1];
+		if (last && Math.abs(pt.tick - last.tick) < 0.5 / this.ppt && pt.pitch === last.pitch) return;
+		g.pts.push(pt);
+		this.liveStroke = { track: g.track, pts: g.pts };
 	}
 
 	/** Selected note whose time span (plus a margin) contains the pointer. */
@@ -820,6 +883,9 @@ export class RollController {
 			case 'erase':
 				this.eraseAt(p);
 				break;
+			case 'curve':
+				if (this.moved) this.extendStroke(g, p);
+				break;
 			case 'point': {
 				const note = g.origin.find((n) => n.id === g.noteId);
 				if (!note) return;
@@ -870,7 +936,8 @@ export class RollController {
 		else if (p.y < RULER_H && p.x >= this.keysW) this.cursor = 'pointer';
 		else if (view.tool === 'erase') this.cursor = hit ? 'not-allowed' : 'default';
 		else if (view.tool === 'draw') this.cursor = hit ? 'grab' : 'crosshair';
-		else if (view.tool === 'pitch') this.cursor = this.pointAt(p) ? 'grab' : 'crosshair';
+		else if (view.tool === 'pitch')
+			this.cursor = settings.data.pitchMode === 'note' && this.pointAt(p) ? 'grab' : 'crosshair';
 		else this.cursor = hit ? 'grab' : 'default';
 	}
 
@@ -880,6 +947,7 @@ export class RollController {
 		const g = this.gesture;
 		if (g && ['move', 'resize', 'draw', 'erase', 'point'].includes(g.kind)) project.cancelGesture();
 		this.gesture = null;
+		this.liveStroke = null;
 		this.rubber = null;
 		this.guideTick = null;
 		this.pressedKey = null;
@@ -947,7 +1015,7 @@ export class RollController {
 
 	private updateAutoScroll(p: { x: number; y: number }) {
 		const g = this.gesture;
-		if (!g || !['move', 'resize', 'draw', 'rubber', 'point'].includes(g.kind)) return;
+		if (!g || !['move', 'resize', 'draw', 'rubber', 'point', 'curve'].includes(g.kind)) return;
 		const edge = 36;
 		const near =
 			p.x > this.width - edge ||

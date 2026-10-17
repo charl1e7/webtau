@@ -1,3 +1,4 @@
+import { bakeCurve } from '#lib/core/pitch-curve';
 import { DEFAULT_VIBRATO, createPitchPoint, gridTicks, noteEnd } from '#lib/core/music';
 import {
 	applyPortamento,
@@ -121,8 +122,9 @@ export const file = {
 	exportUst: guard(() => {
 		if (!project.notes.length) throw new Error('Nothing to export: add some notes first.');
 		const track = project.tracks.find((t) => t.id === project.activeTrack) ?? project.tracks[0];
-		const notes = project.notes.filter((n) => n.track === track.id);
-		if (!notes.length) throw new Error(`The track “${track.name}” has no notes to export.`);
+		const own = project.notes.filter((n) => n.track === track.id);
+		if (!own.length) throw new Error(`The track “${track.name}” has no notes to export.`);
+		const notes = bakeCurve(own, track, project.tempoMap);
 		const { text, warnings } = serializeUst(notes, project.tempos, {
 			name: project.name,
 			voicebank: project.voicebankName

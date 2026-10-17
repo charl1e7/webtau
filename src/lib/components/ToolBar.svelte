@@ -43,6 +43,19 @@
 		{/each}
 	</div>
 
+	{#if view.tool === 'pitch'}
+		<button
+			class="btn mode-chip"
+			title="Pitch editing: one curve per track, or points on single notes (Settings)"
+			aria-label="Pitch mode: {settings.data.pitchMode === 'track' ? 'whole track' : 'single note'}"
+			onclick={() =>
+				(settings.data.pitchMode = settings.data.pitchMode === 'track' ? 'note' : 'track')}
+		>
+			<span class="swatch" style:background={activeTrack?.color}></span>
+			{settings.data.pitchMode === 'track' ? 'Track' : 'Note'}
+		</button>
+	{/if}
+
 	<div class="group">
 		<label class="grid" title="Grid resolution">
 			{#if !ui.compact}<Icon name="grid" size={16} />{/if}
@@ -194,6 +207,15 @@
 		padding: 0 12px;
 		border-radius: 12px;
 		max-width: 180px;
+	}
+	.mode-chip {
+		min-height: 36px;
+		padding: 0 12px;
+		border-radius: 12px;
+		flex: none;
+	}
+	.compact .mode-chip {
+		min-height: 44px;
 	}
 	.swatch {
 		width: 10px;
