@@ -142,6 +142,13 @@
 					: null;
 			})(),
 			notePitchMode: settings.data.pitchMode === 'note',
+			renderReady:
+				playback.busy || playback.buffering
+					? playback.readyRanges.map((r) => ({
+							start: project.tempoMap.msToTick(r.start),
+							end: project.tempoMap.msToTick(r.end)
+						}))
+					: null,
 			rubber: c.rubber,
 			guideTick: c.guideTick,
 			pressedKey: c.pressedKey,

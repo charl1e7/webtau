@@ -5,6 +5,8 @@ import type { SynthReply, WorkerCancel, WorkerEnvelope } from './protocol';
 let bridge: WasmBridge | null = null;
 let engine: EngineHandle | null = null;
 const cancelled = new Set<number>();
+/** A progressive render owns the engine's session; one-off renders must not disturb it. */
+let streaming = false;
 
 const reply = (msg: SynthReply, transfer: Transferable[] = []) => self.postMessage(msg, transfer);
 const yieldToEventLoop = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -37,6 +39,11 @@ async function handle(msg: WorkerEnvelope) {
 			return requireEngine().cacheFeatures(msg.name, msg.data);
 		case 'render': {
 			const e = requireEngine();
+			if (streaming) {
+				const side = e.renderOneshot(msg.notes, msg.tempo);
+				if (!side) throw new Error('Synthesis failed.');
+				return side;
+			}
 			const total = e.beginSession(msg.notes, msg.tempo);
 			if (total < 0) throw new Error('Nothing to synthesize.');
 			let remaining = total;
@@ -59,6 +66,28 @@ async function handle(msg: WorkerEnvelope) {
 			const pcm = e.finish();
 			if (!pcm) throw new Error('Synthesis produced no audio.');
 			return { pcm, report: e.report() };
+		}
+		case 'stream_begin': {
+			const e = requireEngine();
+			if (e.beginSession(msg.notes, msg.tempo) < 0) throw new Error('Nothing to synthesize.');
+			streaming = true;
+			return { plan: e.plan() };
+		}
+		case 'stream_render': {
+			const remaining = requireEngine().renderPlanned(msg.indices);
+			if (remaining < 0) throw new Error('Synthesis failed.');
+			return { remaining };
+		}
+		case 'stream_read': {
+			const pcm = requireEngine().read(msg.start, msg.len);
+			if (!pcm) throw new Error('Reading the rendered audio failed.');
+			return { pcm };
+		}
+		case 'stream_end': {
+			const e = requireEngine();
+			streaming = false;
+			e.endStream(msg.complete);
+			return { report: e.report() };
 		}
 	}
 }

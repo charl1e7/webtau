@@ -224,6 +224,95 @@ pub unsafe extern "C" fn wsynth_session_finish(engine: *mut Engine) -> *mut Wasm
     }
 }
 
+/// JSON list of the planned notes of the running session (see `PlanInfo`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wsynth_session_plan(engine: *mut Engine) -> *mut WasmBuffer {
+    let Some(engine) = (unsafe { engine.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_vec(&engine.plan_info()) {
+        Ok(json) => into_buffer(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Renders the planned notes whose indices are given as little-endian u32s.
+/// Returns how many planned notes are still not rendered, or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wsynth_session_render(
+    engine: *mut Engine,
+    indices: *const u8,
+    len: usize,
+) -> i32 {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return -1;
+    };
+    let list: Vec<usize> = unsafe { bytes(indices, len) }
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as usize)
+        .collect();
+    engine.render_planned(&list).map_or(-1, |n| n as i32)
+}
+
+/// A part of the mix so far, as little-endian f32 PCM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wsynth_session_read(
+    engine: *mut Engine,
+    start: usize,
+    len: usize,
+) -> *mut WasmBuffer {
+    let Some(engine) = (unsafe { engine.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let pcm = engine.read_master(start, len);
+    let mut out = Vec::with_capacity(pcm.len() * 4);
+    for s in pcm {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    into_buffer(out)
+}
+
+/// Ends a progressive session (`complete` = 1 when every note was rendered).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wsynth_session_end(engine: *mut Engine, complete: u32) -> bool {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return false;
+    };
+    engine.end_stream(complete != 0).is_ok()
+}
+
+/// Renders a project on the side (see `Engine::render_oneshot`). Returns
+/// `[u32 json length][report json][f32 pcm]`, or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wsynth_render_oneshot(
+    engine: *mut Engine,
+    json: *const u8,
+    len: usize,
+) -> *mut WasmBuffer {
+    let Some(engine) = (unsafe { engine.as_mut() }) else {
+        return ptr::null_mut();
+    };
+    let Ok(project) = serde_json::from_str::<ProjectInfo>(unsafe { text(json, len) }) else {
+        return ptr::null_mut();
+    };
+    if project.notes.is_empty() {
+        return ptr::null_mut();
+    }
+    let Ok((pcm, report)) = engine.render_oneshot(project) else {
+        return ptr::null_mut();
+    };
+    let Ok(report_json) = serde_json::to_vec(&report) else {
+        return ptr::null_mut();
+    };
+    let mut out = Vec::with_capacity(4 + report_json.len() + pcm.len() * 4);
+    out.extend_from_slice(&(report_json.len() as u32).to_le_bytes());
+    out.extend_from_slice(&report_json);
+    for s in pcm {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    into_buffer(out)
+}
+
 /// JSON report of the last finished session.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wsynth_engine_report(engine: *mut Engine) -> *mut WasmBuffer {

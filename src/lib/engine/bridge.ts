@@ -17,6 +17,19 @@ export interface EngineNote {
 	track?: number;
 }
 
+/** One planned note of a progressive render, known before it is rendered. */
+export interface PlanEntry {
+	/** What `renderPlanned` takes. */
+	index: number;
+	/** Index in the notes array that was sent. */
+	source_index: number;
+	start: number;
+	span_start: number;
+	span_end: number;
+	/** The sample file the note needs (as in oto.ini). */
+	file: string;
+}
+
 export interface RenderReport {
 	total: number;
 	rendered: number;
@@ -59,6 +72,11 @@ export class WasmBridge {
 			step: f('wsynth_session_step', 'number', 2),
 			finish: f('wsynth_session_finish', 'number', 1),
 			report: f('wsynth_engine_report', 'number', 1),
+			plan: f('wsynth_session_plan', 'number', 1),
+			renderPlanned: f('wsynth_session_render', 'number', 3),
+			read: f('wsynth_session_read', 'number', 3),
+			end: f('wsynth_session_end', 'boolean', 2),
+			oneshot: f('wsynth_render_oneshot', 'number', 3),
 			free: f('wsynth_free_buffer', null, 1)
 		};
 		this.fn.init();
@@ -155,7 +173,25 @@ export class WasmBridge {
 			const bytes = this.take(this.fn.finish(e));
 			return bytes ? new Float32Array(bytes.buffer, 0, bytes.byteLength >> 2) : null;
 		},
-		report: (e: number) => this.takeJson<RenderReport>(this.fn.report(e))
+		report: (e: number) => this.takeJson<RenderReport>(this.fn.report(e)),
+		plan: (e: number) => this.takeJson<PlanEntry[]>(this.fn.plan(e)) ?? [],
+		renderPlanned: (e: number, indices: number[]) =>
+			this.withBytes(new Uint8Array(Uint32Array.from(indices).buffer), (p, l) =>
+				this.fn.renderPlanned(e, p, l)
+			),
+		read: (e: number, start: number, len: number): Float32Array | null => {
+			const bytes = this.take(this.fn.read(e, start, len));
+			return bytes ? new Float32Array(bytes.buffer, 0, bytes.byteLength >> 2) : null;
+		},
+		end: (e: number, complete: boolean) => !!this.fn.end(e, complete ? 1 : 0),
+		oneshot: (e: number, json: string) => {
+			const bytes = this.take(this.withText(json, (p, l) => this.fn.oneshot(e, p, l)));
+			if (!bytes) return null;
+			const jsonLen = new DataView(bytes.buffer).getUint32(0, true);
+			const report = JSON.parse(decoder.decode(bytes.subarray(4, 4 + jsonLen))) as RenderReport;
+			const pcmBytes = bytes.slice(4 + jsonLen);
+			return { report, pcm: new Float32Array(pcmBytes.buffer, 0, pcmBytes.byteLength >> 2) };
+		}
 	};
 }
 
@@ -198,6 +234,21 @@ export class EngineHandle {
 	}
 	finish() {
 		return this.bridge.call.finish(this.ptr);
+	}
+	plan() {
+		return this.bridge.call.plan(this.ptr);
+	}
+	renderPlanned(indices: number[]): number {
+		return this.bridge.call.renderPlanned(this.ptr, indices);
+	}
+	read(start: number, len: number) {
+		return this.bridge.call.read(this.ptr, start, len);
+	}
+	endStream(complete: boolean) {
+		return this.bridge.call.end(this.ptr, complete);
+	}
+	renderOneshot(notes: EngineNote[], tempo: number) {
+		return this.bridge.call.oneshot(this.ptr, JSON.stringify({ notes, tempo }));
 	}
 	report() {
 		return this.bridge.call.report(this.ptr);

@@ -25,6 +25,8 @@
 - **Fast sample analysis** — samples are analyzed _lazily_ (only what your song uses), on a pool of
   workers, optionally in the background, and **cached in IndexedDB**: a voicebank is analyzed once per browser.
   Choose _Fast_ (DIO, default) or _Accurate_ (Harvest) quality in Settings.
+- **Progressive rendering** — playback starts as soon as the first notes are ready; the render follows the playhead
+  (seek anywhere and it renders from there), and a spinner shows when playback has caught up with it.
 - **Incremental rendering** — rendered notes are cached by the engine, so after an edit only the
   changed notes are re-synthesized.
 - **Piano roll for desktop and touch** — select / draw / pitch / erase tools, drag to move, grab either

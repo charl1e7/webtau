@@ -1,5 +1,13 @@
 import type { Note, Track } from '#lib/core/types';
-import type { RenderHooks, RenderJob, RenderNote, RendererBackend } from './types';
+import type {
+	RenderHooks,
+	RenderJob,
+	RenderNote,
+	RenderOutcome,
+	RenderStream,
+	RendererBackend
+} from './types';
+import type { Interval } from './intervals';
 
 export const DEFAULT_RENDERER = 'world';
 
@@ -79,6 +87,43 @@ export interface MixedJob {
 	cancel(): void;
 }
 
+/** Mixes what the backends returned into one buffer and maps their reports back to note ids. */
+export function mixOutcomes(groups: RenderGroup[], done: RenderOutcome[]): MixedOutcome {
+	const length = done.reduce((m, o) => Math.max(m, o.pcm.length), 0);
+	let pcm: Float32Array;
+	if (done.length === 1) pcm = done[0].pcm;
+	else {
+		pcm = new Float32Array(length);
+		for (const o of done) for (let i = 0; i < o.pcm.length; i++) pcm[i] += o.pcm[i];
+	}
+	const out: MixedOutcome = {
+		pcm,
+		rendered: 0,
+		cached: 0,
+		missingAlias: [],
+		missingFeatures: [],
+		errors: [],
+		spans: []
+	};
+	done.forEach((o, g) => {
+		out.rendered += o.report.rendered;
+		out.cached += o.report.cached;
+		out.missingAlias.push(...o.report.missing_alias.map((i) => groups[g].ids[i]));
+		out.missingFeatures.push(...o.report.missing_features.map((i) => groups[g].ids[i]));
+		out.errors.push(...o.report.errors);
+		for (const sp of o.report.spans ?? []) {
+			out.spans.push({
+				id: groups[g].ids[sp.index],
+				start: sp.start,
+				end: sp.end,
+				fadeIn: sp.fade_in,
+				fadeOut: sp.fade_out
+			});
+		}
+	});
+	return out;
+}
+
 /**
  * Renders every group on its own backend (in parallel) and mixes the results
  * into one buffer. With a single backend the buffer is returned as it is.
@@ -112,43 +157,89 @@ export function renderMixed(
 		})
 	);
 
-	const promise = Promise.all(jobs.map((j) => j.promise)).then((outcomes): MixedOutcome | null => {
-		if (outcomes.some((o) => o === null)) return null;
-		const done = outcomes as NonNullable<(typeof outcomes)[number]>[];
-		const length = done.reduce((m, o) => Math.max(m, o.pcm.length), 0);
-		let pcm: Float32Array;
-		if (done.length === 1) pcm = done[0].pcm;
-		else {
-			pcm = new Float32Array(length);
-			for (const o of done) for (let i = 0; i < o.pcm.length; i++) pcm[i] += o.pcm[i];
-		}
-		const out: MixedOutcome = {
-			pcm,
-			rendered: 0,
-			cached: 0,
-			missingAlias: [],
-			missingFeatures: [],
-			errors: [],
-			spans: []
-		};
-		done.forEach((o, g) => {
-			out.rendered += o.report.rendered;
-			out.cached += o.report.cached;
-			out.missingAlias.push(...o.report.missing_alias.map((i) => groups[g].ids[i]));
-			out.missingFeatures.push(...o.report.missing_features.map((i) => groups[g].ids[i]));
-			out.errors.push(...o.report.errors);
-			for (const sp of o.report.spans ?? []) {
-				out.spans.push({
-					id: groups[g].ids[sp.index],
-					start: sp.start,
-					end: sp.end,
-					fadeIn: sp.fade_in,
-					fadeOut: sp.fade_out
-				});
-			}
-		});
-		return out;
-	});
+	const promise = Promise.all(jobs.map((j) => j.promise)).then((outcomes): MixedOutcome | null =>
+		outcomes.some((o) => o === null) ? null : mixOutcomes(groups, outcomes as RenderOutcome[])
+	);
 
 	return { promise, cancel: () => jobs.forEach((j) => j.cancel()) };
+}
+
+/** A render of the whole project that can be listened to while it goes on. */
+export interface ProjectRender {
+	stream: RenderStream;
+	/** The finished mix with its report mapped to note ids; null when cancelled. */
+	result: Promise<MixedOutcome | null>;
+	cancel(): void;
+}
+
+/**
+ * Starts rendering the project. A single backend that can stream does so, so
+ * playback may begin before the end; otherwise everything is rendered first and
+ * the stream only becomes ready when it is done.
+ */
+export function startRender(
+	groups: RenderGroup[],
+	tempo: number,
+	hooks: RenderHooks = {}
+): ProjectRender {
+	if (groups.length === 1 && groups[0].backend.stream) {
+		const stream = groups[0].backend.stream(groups[0].notes, tempo, hooks);
+		return {
+			stream,
+			result: stream.promise.then((o) => (o ? mixOutcomes(groups, [o]) : null)),
+			cancel: () => stream.cancel()
+		};
+	}
+	const progress = { done: 0, total: 0 };
+	const job = renderMixed(groups, tempo, {
+		...hooks,
+		onSynthesize: (done, total) => {
+			progress.done = done;
+			progress.total = total;
+			hooks.onSynthesize?.(done, total);
+		}
+	});
+	const stream = batchStream(progress, job);
+	return { stream, result: job.promise, cancel: () => job.cancel() };
+}
+
+/** The stream of a render that is only ready as a whole. */
+function batchStream(progress: { done: number; total: number }, job: MixedJob): RenderStream {
+	let pcm: Float32Array = new Float32Array(0);
+	let complete = false;
+	const empty: RenderOutcome['report'] = {
+		total: 0,
+		rendered: 0,
+		cached: 0,
+		skipped_rests: 0,
+		missing_alias: [],
+		missing_features: [],
+		errors: []
+	};
+	const stream: RenderStream = {
+		get buffer() {
+			return pcm;
+		},
+		get durationMs() {
+			return (pcm.length / 44100) * 1000;
+		},
+		focus: () => {},
+		readyUntil: (ms) => (complete ? Math.max(ms, stream.durationMs) : ms),
+		ready: (): Interval[] => (complete ? [{ start: 0, end: stream.durationMs }] : []),
+		get complete() {
+			return complete;
+		},
+		progress,
+		waiting: 'Rendering',
+		onChange: null,
+		promise: job.promise.then((o) => {
+			if (!o) return null;
+			pcm = o.pcm;
+			complete = true;
+			stream.onChange?.();
+			return { pcm: o.pcm, report: empty };
+		}),
+		cancel: () => job.cancel()
+	};
+	return stream;
 }

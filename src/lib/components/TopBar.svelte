@@ -67,7 +67,7 @@
 			aria-label={playback.playing ? 'Pause' : 'Play'}
 			onclick={() => playback.toggle()}
 		>
-			{#if playback.busy}
+			{#if playback.buffering}
 				<span class="spinner" aria-hidden="true"></span>
 			{:else}
 				<Icon name={playback.playing ? 'pause' : 'play'} />

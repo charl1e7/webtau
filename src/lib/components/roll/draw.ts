@@ -123,6 +123,8 @@ export interface Frame {
 	liveStroke: { color: string; pts: readonly CurvePoint[] } | null;
 	/** Whether pitch points on single notes are the thing being edited. */
 	notePitchMode: boolean;
+	/** While a render is going on: the stretches of the song (in ticks) whose audio is ready. */
+	renderReady: { start: number; end: number }[] | null;
 	rubber: Rect | null;
 	guideTick: number | null;
 	pressedKey: number | null;
@@ -601,6 +603,21 @@ function drawRuler(ctx: CanvasRenderingContext2D, f: Frame) {
 	ctx.fillRect(f.keysW, 0, f.w - f.keysW, f.rulerH);
 	ctx.fillStyle = rg;
 	ctx.fillRect(f.keysW, 0, f.w - f.keysW, f.rulerH);
+
+	if (f.renderReady) {
+		// Under the ruler numbers: a faint track, and what can already be listened to in the accent colour.
+		const y = f.rulerH - 3;
+		ctx.fillStyle = 'rgba(255,255,255,0.08)';
+		ctx.fillRect(f.keysW, y, f.w - f.keysW, 3);
+		ctx.fillStyle = t.accent;
+		ctx.globalAlpha = 0.85;
+		for (const r of f.renderReady) {
+			const x0 = Math.max(f.keysW, xAt(f, r.start));
+			const x1 = Math.min(f.w, xAt(f, r.end));
+			if (x1 > x0) ctx.fillRect(x0, y, Math.max(1, x1 - x0), 3);
+		}
+		ctx.globalAlpha = 1;
+	}
 
 	const [t0, t1] = visibleTicks(f);
 	const measure = f.measureTicks;
