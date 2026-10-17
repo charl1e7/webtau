@@ -2,7 +2,7 @@ import { expect, test, type App } from './fixtures';
 import type { Page } from '@playwright/test';
 
 /** Opens a File-menu entry on both layouts. */
-async function fileMenu(app: App, page: Page, item: string) {
+async function fileMenu(app: App, page: Page, item: string | RegExp) {
 	if (app.isMobile) {
 		await app.press(page.getByRole('button', { name: 'Menu' }));
 		await app.press(page.getByRole('menuitem', { name: 'File' }));
@@ -36,7 +36,7 @@ test.describe('importing and exporting', () => {
 	test('import UST through the file picker', async ({ app, page }) => {
 		const [chooser] = await Promise.all([
 			page.waitForEvent('filechooser'),
-			fileMenu(app, page, 'Import UST')
+			fileMenu(app, page, /^Import UST…/)
 		]);
 		await chooser.setFiles({ name: 'song.ust', mimeType: 'text/plain', buffer: Buffer.from(UST) });
 		await expect.poll(() => app.notes).toHaveLength(2);
@@ -52,7 +52,7 @@ test.describe('importing and exporting', () => {
 
 		const [ust] = await Promise.all([
 			page.waitForEvent('download'),
-			fileMenu(app, page, 'Export UST')
+			fileMenu(app, page, /^Export UST$/)
 		]);
 		const ustText = await (await import('node:fs/promises')).readFile((await ust.path())!, 'utf8');
 		expect(ustText).toContain('Lyric=ka');
@@ -161,7 +161,7 @@ test.describe('tracks and tempo', () => {
 		);
 		const [ust] = await Promise.all([
 			page.waitForEvent('download'),
-			fileMenu(app, page, 'Export UST')
+			fileMenu(app, page, /^Export UST$/)
 		]);
 		const text = await (await import('node:fs/promises')).readFile((await ust.path())!, 'utf8');
 		const pby = /PBY=(.*)/.exec(text)?.[1].split(',').map(Number) ?? [];
@@ -199,5 +199,115 @@ test.describe('tracks and tempo', () => {
 		expect(await app.eval((w) => w.project.tracks[0].pitchCurve.length)).toBe(0);
 		expect(await app.eval((w) => w.project.restoreAutosave())).toBe(true);
 		expect(await app.eval((w) => w.project.tracks[0].pitchCurve.flat().length)).toBe(2);
+	});
+
+	test('import USTX through the picker, drop it, and export it back for OpenUtau', async ({
+		app,
+		page
+	}) => {
+		const USTX = `name: Demo
+ustx_version: "0.6"
+tempos:
+- position: 0
+  bpm: 130
+time_signatures:
+- bar_position: 0
+  beat_per_bar: 4
+  beat_unit: 4
+tracks:
+- track_name: Lead
+  track_color: Blue
+  singer: Test Bank
+- track_name: Backing
+  track_color: Pink
+voice_parts:
+- duration: 1920
+  track_no: 0
+  position: 0
+  notes:
+  - position: 0
+    duration: 480
+    tone: 60
+    lyric: ka
+    pitch:
+      data:
+      - {x: -25, y: 0, shape: io}
+      - {x: 25, y: 0, shape: io}
+      snap_first: true
+    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}
+    phoneme_expressions:
+    - {index: 0, abbr: vel, value: 110}
+  - position: 480
+    duration: 480
+    tone: 62
+    lyric: sa
+    vibrato: {length: 40, period: 180, depth: 30, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}
+  curves:
+  - abbr: pitd
+    xs: [-5, 0, 100, 105]
+    ys: [0, 50, 50, 0]
+- duration: 960
+  track_no: 1
+  position: 0
+  notes:
+  - {position: 0, duration: 960, tone: 55, lyric: a}
+`;
+		const [chooser] = await Promise.all([
+			page.waitForEvent('filechooser'),
+			fileMenu(app, page, /^Import USTX/)
+		]);
+		await chooser.setFiles({ name: 'demo.ustx', mimeType: 'text/yaml', buffer: Buffer.from(USTX) });
+		await expect.poll(() => app.notes).toHaveLength(3);
+		expect(await app.eval((w) => w.project.tempos[0].bpm)).toBe(130);
+		expect(await app.eval((w) => w.project.tracks.map((t) => t.name))).toEqual(['Lead', 'Backing']);
+		expect(
+			await app.eval(
+				(w) => w.project.notes.filter((n) => n.track === w.project.tracks[0].id)[0].velocity
+			)
+		).toBe(110);
+		expect(await app.eval((w) => w.project.tracks[0].pitchCurve.length)).toBeGreaterThan(0);
+		expect(await app.eval((w) => w.project.voicebankName)).toBe('Test Bank');
+
+		const [down] = await Promise.all([
+			page.waitForEvent('download'),
+			fileMenu(app, page, /^Export USTX/)
+		]);
+		expect(down.suggestedFilename()).toMatch(/\.ustx$/);
+		const text = await (await import('node:fs/promises')).readFile((await down.path())!, 'utf8');
+		expect(text).toContain('ustx_version: "0.6"');
+		expect(text).toContain('track_name: Backing');
+		expect(text).toContain('abbr: pitd');
+		expect(text).toContain('lyric: sa');
+
+		// And the export opens again.
+		await app.eval((w) => w.project.reset());
+		const [again] = await Promise.all([
+			page.waitForEvent('filechooser'),
+			fileMenu(app, page, /^Import USTX/)
+		]);
+		await again.setFiles({ name: 'back.ustx', mimeType: 'text/yaml', buffer: Buffer.from(text) });
+		await expect.poll(() => app.notes).toHaveLength(3);
+		expect(await app.eval((w) => w.project.tracks[0].pitchCurve.length)).toBeGreaterThan(0);
+	});
+
+	test('a dropped .ustx file opens', async ({ app, page }) => {
+		test.skip(app.isMobile, 'drag and drop');
+		const text = `name: Dropped
+tracks:
+- track_name: T
+voice_parts:
+- track_no: 0
+  position: 0
+  notes:
+  - {position: 0, duration: 480, tone: 67, lyric: ka}
+`;
+		const data = await page.evaluateHandle((t) => {
+			const dt = new DataTransfer();
+			dt.items.add(new File([t], 'dropped.ustx', { type: 'text/yaml' }));
+			return dt;
+		}, text);
+		await page.dispatchEvent('body', 'drop', { dataTransfer: data });
+		await expect.poll(() => app.notes).toHaveLength(1);
+		expect((await app.notes)[0].pitch).toBe(67);
 	});
 });

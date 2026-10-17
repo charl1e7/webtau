@@ -227,7 +227,7 @@
 					Pick the <b>pencil</b> tool and tap to add notes,<br />or double-tap anywhere.
 				{:else}
 					Double-click to add a note, or choose the <b>pencil</b> tool (B).<br />
-					Drop a <b>.ust</b> / <b>.mid</b> file to import.
+					Drop a <b>.ust</b> / <b>.ustx</b> / <b>.mid</b> file to import.
 				{/if}
 			</p>
 		</div>
