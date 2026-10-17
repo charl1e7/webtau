@@ -144,4 +144,60 @@ test.describe('tracks and tempo', () => {
 		await page.keyboard.press('Control+z');
 		expect(await app.eval((w) => w.project.tempos[1].tick)).toBe(tick);
 	});
+
+	test('the track pitch curve is baked into the UST and survives save / open', async ({
+		app,
+		page
+	}) => {
+		await app.setNotes([{ tick: 0, length: 960, pitch: 60, lyric: 'ka' }]);
+		await app.eval((w) =>
+			w.project.setPitchCurve(w.project.tracks[0].id, [
+				[
+					{ tick: 100, pitch: 60 },
+					{ tick: 500, pitch: 62 },
+					{ tick: 900, pitch: 60 }
+				]
+			])
+		);
+		const [ust] = await Promise.all([
+			page.waitForEvent('download'),
+			fileMenu(app, page, 'Export UST')
+		]);
+		const text = await (await import('node:fs/promises')).readFile((await ust.path())!, 'utf8');
+		const pby = /PBY=(.*)/.exec(text)?.[1].split(',').map(Number) ?? [];
+		// 62 over a note on 60 is +200 cents = 20 in UST units (sampled every 10 ms).
+		expect(Math.max(...pby)).toBeGreaterThan(19);
+		expect(Math.max(...pby)).toBeLessThan(20.5);
+
+		const [proj] = await Promise.all([
+			page.waitForEvent('download'),
+			fileMenu(app, page, 'Save project')
+		]);
+		const path = (await proj.path())!;
+		await app.eval((w) => w.project.clearPitchCurve(w.project.tracks[0].id));
+		page.once('dialog', (d) => void d.accept()); // "discard unsaved changes?"
+		const [chooser] = await Promise.all([
+			page.waitForEvent('filechooser'),
+			fileMenu(app, page, 'Open project')
+		]);
+		await chooser.setFiles(path);
+		await expect.poll(() => app.eval((w) => w.project.tracks[0].pitchCurve.flat().length)).toBe(3);
+	});
+
+	test('the autosave brings the curve back', async ({ app, page }) => {
+		await app.setNotes([{ tick: 0, length: 960, pitch: 60 }]);
+		await app.eval((w) =>
+			w.project.setPitchCurve(w.project.tracks[0].id, [
+				[
+					{ tick: 100, pitch: 61 },
+					{ tick: 800, pitch: 62 }
+				]
+			])
+		);
+		await page.waitForTimeout(1600);
+		await app.eval((w) => w.project.reset());
+		expect(await app.eval((w) => w.project.tracks[0].pitchCurve.length)).toBe(0);
+		expect(await app.eval((w) => w.project.restoreAutosave())).toBe(true);
+		expect(await app.eval((w) => w.project.tracks[0].pitchCurve.flat().length)).toBe(2);
+	});
 });

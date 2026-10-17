@@ -3,7 +3,7 @@ import { History } from '#lib/core/history';
 import { TempoMap } from '#lib/core/tempo';
 import { cloneNote, createNote, createTrack, TRACK_COLORS } from '#lib/core/music';
 import { pasteNotes, sortNotes } from '#lib/core/ops';
-import { insertStroke } from '#lib/core/pitch-curve';
+import { followMovedNotes, insertStroke, paintStrokeOnNotes } from '#lib/core/pitch-curve';
 import {
 	DEFAULT_TRACK_ID,
 	PPQ,
@@ -132,6 +132,8 @@ export class ProjectState {
 		const next = update(this.notes);
 		if (next === this.notes) return;
 		if (!this.gestureBase) this.record(opts.coalesce);
+		// A pitch curve drawn over notes goes with them when they move.
+		if (!this.gestureBase) this.tracks = followMovedNotes(this.tracks, this.notes, next) as Track[];
 		this.notes = next;
 		this.changed();
 	}
@@ -153,12 +155,27 @@ export class ProjectState {
 
 	/** Starts a continuous edit (drag); previews do not create undo steps. */
 	beginGesture() {
+		this.gestureFollowed = false;
 		this.gestureBase = this.snapshot();
 	}
+
+	/** Whether the curve of some track was moved along with notes during the running gesture. */
+	private gestureFollowed = false;
 
 	preview(update: (notes: Note[]) => Note[]) {
 		const next = update(this.notes);
 		if (next === this.notes) return;
+		const base = this.gestureBase;
+		if (base) {
+			const tracks = followMovedNotes(base.tracks, base.notes, next) as Track[];
+			if (tracks !== base.tracks) {
+				this.tracks = tracks;
+				this.gestureFollowed = true;
+			} else if (this.gestureFollowed) {
+				this.tracks = base.tracks;
+				this.gestureFollowed = false;
+			}
+		}
 		this.notes = next;
 		this.revision++;
 		this.dirty = true;
@@ -168,7 +185,7 @@ export class ProjectState {
 		const base = this.gestureBase;
 		this.gestureBase = null;
 		if (!base) return;
-		if (base.notes !== this.notes) {
+		if (base.notes !== this.notes || base.tracks !== this.tracks) {
 			this.history.record(base);
 			this.coalesceKey = '';
 			this.changed();
@@ -180,6 +197,8 @@ export class ProjectState {
 		this.gestureBase = null;
 		if (base) {
 			this.notes = base.notes;
+			this.tracks = base.tracks;
+			this.gestureFollowed = false;
 			this.revision++;
 		}
 	}
@@ -330,7 +349,8 @@ export class ProjectState {
 	 * steps of a drag that already has its undo step.
 	 */
 	setPitchCurve(id: string, pitchCurve: PitchStroke[], record = true) {
-		if (record) this.record();
+		// Inside a gesture (the eraser) the gesture's own undo step covers it.
+		if (record && !this.gestureBase) this.record();
 		this.tracks = this.tracks.map((t) => (t.id === id ? { ...t, pitchCurve } : t));
 		this.changed();
 	}
@@ -341,6 +361,13 @@ export class ProjectState {
 		if (!track) return;
 		const next = insertStroke(track.pitchCurve, points);
 		if (next.length || track.pitchCurve.length) this.setPitchCurve(id, next);
+	}
+
+	/** Freehand drawing in the single-note mode: bakes the stroke into the notes of a track. */
+	paintPitchOnNotes(trackId: string, points: readonly CurvePoint[]) {
+		this.edit((notes) =>
+			paintStrokeOnNotes(notes, points, this.tempoMap, (n) => n.track === trackId)
+		);
 	}
 
 	clearPitchCurve(id: string) {

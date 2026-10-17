@@ -78,16 +78,17 @@
 				<button
 					class="item"
 					class:danger={item.danger}
+					class:active={item.checked && item.icon}
 					class:header={item.disabled && !item.action && !item.children}
 					role="menuitem"
 					disabled={item.disabled}
 					onclick={() => pick(item)}
 				>
 					<span class="icon"
-						>{#if item.checked}<Icon name="check" size={17} />{:else if item.icon}<Icon
+						>{#if item.icon}<Icon
 								name={item.icon as IconName}
 								size={17}
-							/>{/if}</span
+							/>{:else if item.checked}<Icon name="check" size={17} />{/if}</span
 					>
 					<span class="label">{item.label}</span>
 					{#if item.hint && !ui.compact}<span class="hint">{item.hint}</span>{/if}
@@ -150,6 +151,13 @@
 	.item:hover:not(:disabled),
 	.item:focus-visible {
 		background: linear-gradient(90deg, rgba(255, 61, 143, 0.2), rgba(255, 61, 143, 0.05));
+	}
+	.item.active {
+		background: rgba(255, 61, 143, 0.14);
+		color: var(--accent);
+	}
+	.item.active .icon {
+		color: var(--accent);
 	}
 	.item.danger {
 		color: var(--danger);

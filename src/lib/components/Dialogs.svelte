@@ -120,12 +120,33 @@
 		<div class="field">
 			<label for="s-pitch">Pitch editing</label>
 			<select id="s-pitch" bind:value={settings.data.pitchMode}>
-				<option value="track">Whole track — draw one curve over all notes (default)</option>
-				<option value="note">Single note — place pitch points on each note</option>
+				<option value="track">Whole track — one curve over all notes (default)</option>
+				<option value="note">Single notes — pitch is stored on each note</option>
+			</select>
+		</div>
+		<div class="field">
+			<label for="s-pstyle">Drawing</label>
+			<select id="s-pstyle" bind:value={settings.data.pitchStyle}>
+				<option value="freehand">Freehand — drag with mouse or finger (default)</option>
+				<option value="points">Points — click to place, drag to move, double-click to remove</option
+				>
 			</select>
 			<span class="hint"
-				>Pick the pitch tool (curve icon) and drag across the roll. Each track keeps its own curve
-				in its colour; the eraser removes parts of it.</span
+				>Both styles work in both modes and can be mixed: points can always be grabbed, and a
+				freehand stroke replaces what is under it. Each track keeps its curve in its colour; the
+				eraser cuts it.</span
+			>
+		</div>
+
+		<div class="field">
+			<label for="s-eraser">Eraser</label>
+			<select id="s-eraser" bind:value={settings.data.eraserMode}>
+				<option value="all">Notes and pitch (default)</option>
+				<option value="notes">Notes only</option>
+				<option value="pitch">Pitch only</option>
+			</select>
+			<span class="hint"
+				>Hold the pitch or eraser button (right-click on a computer) for a quick choice.</span
 			>
 		</div>
 

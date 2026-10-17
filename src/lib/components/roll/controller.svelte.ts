@@ -7,7 +7,14 @@ import {
 	noteEnd
 } from '#lib/core/music';
 import { moveNotes, notesInRange } from '#lib/core/ops';
-import { curveAt, eraseRange } from '#lib/core/pitch-curve';
+import {
+	addPoint,
+	curveAt,
+	eraseRange,
+	movePoint,
+	removePoint,
+	type PointRef
+} from '#lib/core/pitch-curve';
 import { MAX_PITCH, MIN_NOTE_TICKS, MIN_PITCH, type CurvePoint, type Note } from '#lib/core/types';
 import { emptyMenu, noteMenu, rulerMenu } from '#lib/state/menus';
 import { playback } from '#lib/state/playback.svelte';
@@ -53,8 +60,9 @@ type Gesture =
 			grabId: string;
 	  }
 	| { kind: 'draw'; id: string; tick0: number }
-	| { kind: 'erase'; erased: Set<string>; curveRecorded: boolean }
-	| { kind: 'curve'; track: string; pts: CurvePoint[]; hit: Note | null }
+	| { kind: 'erase'; erased: Set<string>; cleared: Set<string> }
+	| { kind: 'curve'; track: string; pts: CurvePoint[]; hit: Note | null; notes: boolean }
+	| { kind: 'curvePoint'; track: string; ref: PointRef; recorded: boolean; created: boolean }
 	| { kind: 'rubber'; base: ReadonlySet<string> }
 	| { kind: 'pan'; lastX: number; lastY: number; samples: { t: number; x: number; y: number }[] }
 	| { kind: 'pending'; x: number; y: number; noteId: string | null; onNote: boolean }
@@ -90,6 +98,8 @@ export class RollController {
 	selectedPoint = $state<{ noteId: string; pointId: string } | null>(null);
 	/** The pitch stroke being drawn (track pitch mode). */
 	liveStroke = $state.raw<{ track: string; pts: CurvePoint[] } | null>(null);
+	/** The point of the track pitch curve that was last placed or grabbed. */
+	selectedCurvePoint = $state.raw<{ track: string; ref: PointRef } | null>(null);
 	editingLyricId = $state<string | null>(null);
 
 	keysW = $derived(ui.compact ? 44 : 56);
@@ -384,10 +394,14 @@ export class RollController {
 				project.select([...project.selection].filter((id) => !g.erased.has(id)));
 				break;
 			}
+			case 'curvePoint':
+				break;
 			case 'curve': {
 				this.liveStroke = null;
 				if (this.moved && g.pts.length > 1) {
-					project.addPitchStroke(g.track, g.pts);
+					this.selectedCurvePoint = null;
+					if (g.notes) project.paintPitchOnNotes(g.track, g.pts);
+					else project.addPitchStroke(g.track, g.pts);
 				} else if (g.hit) {
 					project.select([g.hit.id]);
 				} else if (!this.isDoubleTapPending) {
@@ -477,6 +491,10 @@ export class RollController {
 			);
 			if (!stillDown) return;
 			if (this.moved || g.kind === 'pan') return;
+			if (g.kind === 'curvePoint' && g.created) {
+				project.undo();
+				this.selectedCurvePoint = null;
+			}
 			// Abort whatever tentative edit has started and show the menu instead.
 			if (['move', 'resize', 'draw', 'point'].includes(g.kind)) project.cancelGesture();
 			this.gesture = null;
@@ -606,36 +624,53 @@ export class RollController {
 
 	private beginErase(p: { x: number; y: number }) {
 		project.beginGesture();
-		this.gesture = { kind: 'erase', erased: new Set(), curveRecorded: false };
+		this.gesture = { kind: 'erase', erased: new Set(), cleared: new Set() };
 		this.eraseAt(p);
 	}
 
 	private eraseAt(p: { x: number; y: number }) {
 		const g = this.gesture;
 		if (g?.kind !== 'erase') return;
+		const mode = settings.data.eraserMode;
 		const hit = this.hitTest(p.x, p.y);
-		if (hit) {
+		if (hit && mode !== 'pitch') {
 			if (!g.erased.has(hit.note.id)) {
 				g.erased.add(hit.note.id);
 				project.preview((notes) => notes.filter((n) => !g.erased.has(n.id)));
 			}
 			return;
 		}
-		if (settings.data.pitchMode === 'track') this.eraseCurveAt(p, g);
+		if (mode === 'notes') return;
+		if (hit && !g.cleared.has(hit.note.id)) {
+			// Pitch only: the note stays, what was drawn on it goes.
+			const note = hit.note;
+			if (note.pitchPoints.length || note.vibrato) {
+				g.cleared.add(note.id);
+				project.preview((notes) =>
+					notes.map((n) => (n.id === note.id ? { ...n, pitchPoints: [], vibrato: null } : n))
+				);
+			}
+		}
+		this.eraseCurveAt(p);
 	}
 
 	/** Cuts the drawn pitch curve out under the pointer (one undo step per drag). */
-	private eraseCurveAt(p: { x: number; y: number }, g: Extract<Gesture, { kind: 'erase' }>) {
+	private eraseCurveAt(p: { x: number; y: number }) {
 		const reach = Math.max(12, this.keyH);
 		const t0 = this.tickAtX(p.x - 8);
 		const t1 = this.tickAtX(p.x + 8);
 		const tick = this.tickAtX(p.x);
 		for (const track of project.tracks) {
 			const value = curveAt(track.pitchCurve, tick);
-			if (value === null) continue;
-			if (Math.abs(this.yAtPitch(value) - p.y) > reach) continue;
-			project.setPitchCurve(track.id, eraseRange(track.pitchCurve, t0, t1), !g.curveRecorded);
-			g.curveRecorded = true;
+			const onLine = value !== null && Math.abs(this.yAtPitch(value) - p.y) <= reach;
+			const onPoint = track.pitchCurve.some((s) =>
+				s.some(
+					(pt) => Math.hypot(this.xAtTick(pt.tick) - p.x, this.yAtPitch(pt.pitch) - p.y) <= reach
+				)
+			);
+			if (!onLine && !onPoint) continue;
+			this.selectedCurvePoint = null;
+			project.setPitchCurve(track.id, eraseRange(track.pitchCurve, t0, t1));
 		}
 	}
 
@@ -650,11 +685,41 @@ export class RollController {
 		hit: Note | null,
 		isDouble: boolean
 	) {
-		if (settings.data.pitchMode === 'track') {
-			this.liveStroke = null;
-			this.gesture = { kind: 'curve', track: project.activeTrack, pts: [this.curvePoint(p)], hit };
+		const trackScope = settings.data.pitchMode === 'track';
+		const freehand = settings.data.pitchStyle === 'freehand';
+		this.liveStroke = null;
+
+		if (trackScope) {
+			const grabbed = this.curvePointAt(p);
+			if (grabbed) {
+				if (isDouble || e.button === 2) {
+					this.deleteCurvePoint(project.activeTrack, grabbed);
+					return;
+				}
+				this.selectedCurvePoint = { track: project.activeTrack, ref: grabbed };
+				this.gesture = {
+					kind: 'curvePoint',
+					track: project.activeTrack,
+					ref: grabbed,
+					recorded: false,
+					created: false
+				};
+				return;
+			}
+			if (!freehand) {
+				this.placeCurvePoint(p, e.shiftKey);
+				return;
+			}
+			this.gesture = {
+				kind: 'curve',
+				track: project.activeTrack,
+				pts: [this.curvePoint(p)],
+				hit,
+				notes: false
+			};
 			return;
 		}
+
 		const point = this.pointAt(p);
 		if (point) {
 			if (isDouble || e.button === 2) {
@@ -664,6 +729,17 @@ export class RollController {
 			this.selectedPoint = point;
 			project.beginGesture();
 			this.gesture = { kind: 'point', ...point, origin: project.notes };
+			return;
+		}
+
+		if (freehand) {
+			this.gesture = {
+				kind: 'curve',
+				track: project.activeTrack,
+				pts: [this.curvePoint(p)],
+				hit,
+				notes: true
+			};
 			return;
 		}
 
@@ -696,6 +772,57 @@ export class RollController {
 			project.clearSelection();
 			this.selectedPoint = null;
 		}
+	}
+
+	/** Pitch of a hand-placed point: free, but rounded to 5 cents unless Shift is held. */
+	private placedPoint(p: { x: number; y: number }, fine: boolean): CurvePoint {
+		const pt = this.curvePoint(p);
+		return fine ? pt : { ...pt, pitch: Math.round(pt.pitch * 20) / 20 };
+	}
+
+	private placeCurvePoint(p: { x: number; y: number }, fine: boolean) {
+		const track = project.tracks.find((t) => t.id === project.activeTrack);
+		if (!track) return;
+		// A point within a measure of an existing stroke continues it; farther away it starts a new one.
+		const { strokes, at } = addPoint(
+			track.pitchCurve,
+			this.placedPoint(p, fine),
+			project.ticksPerMeasure()
+		);
+		project.setPitchCurve(track.id, strokes);
+		this.selectedCurvePoint = { track: track.id, ref: at };
+		this.gesture = {
+			kind: 'curvePoint',
+			track: track.id,
+			ref: at,
+			recorded: true,
+			created: true
+		};
+	}
+
+	/** The point of the active track's curve under the pointer, if any. */
+	private curvePointAt(p: { x: number; y: number }): PointRef | null {
+		const track = project.tracks.find((t) => t.id === project.activeTrack);
+		if (!track) return null;
+		let best: PointRef | null = null;
+		let bestDist = ui.touch ? 18 : 9;
+		track.pitchCurve.forEach((stroke, si) =>
+			stroke.forEach((pt, index) => {
+				const d = Math.hypot(this.xAtTick(pt.tick) - p.x, this.yAtPitch(pt.pitch) - p.y);
+				if (d < bestDist) {
+					bestDist = d;
+					best = { stroke: si, index };
+				}
+			})
+		);
+		return best;
+	}
+
+	deleteCurvePoint(trackId: string, ref: PointRef) {
+		const track = project.tracks.find((t) => t.id === trackId);
+		if (!track) return;
+		project.setPitchCurve(trackId, removePoint(track.pitchCurve, ref));
+		this.selectedCurvePoint = null;
 	}
 
 	/** Where on the roll the pointer is, as a point of a pitch curve. */
@@ -886,6 +1013,15 @@ export class RollController {
 			case 'curve':
 				if (this.moved) this.extendStroke(g, p);
 				break;
+			case 'curvePoint': {
+				if (!this.moved) break;
+				const track = project.tracks.find((t) => t.id === g.track);
+				if (!track) break;
+				const next = movePoint(track.pitchCurve, g.ref, this.placedPoint(p, shift));
+				project.setPitchCurve(g.track, next, !g.recorded);
+				g.recorded = true;
+				break;
+			}
 			case 'point': {
 				const note = g.origin.find((n) => n.id === g.noteId);
 				if (!note) return;
@@ -1015,7 +1151,11 @@ export class RollController {
 
 	private updateAutoScroll(p: { x: number; y: number }) {
 		const g = this.gesture;
-		if (!g || !['move', 'resize', 'draw', 'rubber', 'point', 'curve'].includes(g.kind)) return;
+		if (
+			!g ||
+			!['move', 'resize', 'draw', 'rubber', 'point', 'curve', 'curvePoint'].includes(g.kind)
+		)
+			return;
 		const edge = 36;
 		const near =
 			p.x > this.width - edge ||

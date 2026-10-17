@@ -128,6 +128,18 @@
 						pts: c.liveStroke.pts
 					}
 				: null,
+			curveHandles: (() => {
+				if (view.tool !== 'pitch' || settings.data.pitchMode !== 'track') return null;
+				const t = project.tracks.find((q) => q.id === project.activeTrack);
+				const sel = c.selectedCurvePoint;
+				return t?.pitchCurve.length
+					? {
+							color: t.color,
+							strokes: t.pitchCurve,
+							selected: sel && sel.track === t.id ? sel.ref : null
+						}
+					: null;
+			})(),
 			notePitchMode: settings.data.pitchMode === 'note',
 			rubber: c.rubber,
 			guideTick: c.guideTick,
@@ -153,7 +165,10 @@
 
 	// Tools other than "pitch" do not use a selected pitch point.
 	$effect(() => {
-		if (view.tool !== 'pitch') c.selectedPoint = null;
+		if (view.tool !== 'pitch') {
+			c.selectedPoint = null;
+			c.selectedCurvePoint = null;
+		}
 	});
 
 	// Keep the scroll position valid when zooming / resizing the content.
