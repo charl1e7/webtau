@@ -12,6 +12,7 @@ import type { RenderStream } from '#lib/render/types';
 import { renderers } from './renderers';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
+import { DEFAULT_CEILING, LIMITER_LOOKAHEAD, limit } from '#lib/render/limiter';
 import { ui } from './ui.svelte';
 import { lyrics } from './lyrics.svelte';
 import { voicebank } from './voicebank.svelte';
@@ -25,6 +26,11 @@ const AHEAD_S = 0.5;
 const CHUNK_MS = 200;
 /** Do not schedule slivers: wait until at least this much is ready. */
 const MIN_CHUNK_MS = 20;
+/**
+ * After running dry (or at the start) playback waits until this much audio is ready ahead of the
+ * playhead, so that a single finished note does not make it stutter forward one note at a time.
+ */
+const LEAD_MS = 2000;
 
 class PlaybackState {
 	status = $state<RenderStatus>('idle');
@@ -33,6 +39,8 @@ class PlaybackState {
 	playing = $state(false);
 	/** Playing, but the render has not caught up with the playhead yet. */
 	buffering = $state(false);
+	/** Gain the limiter applied to the piece last handed to the sound card (1 = untouched, below 1 = it was clipping). */
+	limiterGain = $state(1);
 	/** Playhead position in milliseconds. */
 	positionMs = $state(0);
 	durationMs = $state(0);
@@ -58,6 +66,8 @@ class PlaybackState {
 	private nextCtx = 0;
 	private startedFrom = 0;
 	private completed = false;
+	/** Waiting for the render to get LEAD_MS ahead of the playhead before going on. */
+	private holding = false;
 
 	/** The progressive render that is going on (or was the last one). */
 	get stream(): RenderStream | null {
@@ -233,6 +243,7 @@ class PlaybackState {
 		this.halt();
 		this.playing = true;
 		this.buffering = false;
+		this.holding = true;
 		this.startedFrom = fromMs;
 		this.positionMs = fromMs;
 		this.nextSample = Math.floor((fromMs / 1000) * SAMPLE_RATE);
@@ -256,17 +267,32 @@ class PlaybackState {
 			this.nextCtx = now + 0.03;
 		}
 
+		// Audio can be handed over up to here: limiting a sample needs a little final audio after it too.
+		const readyMs = stream.readyUntil((this.nextSample / SAMPLE_RATE) * 1000);
+		const whole = stream.complete || (stream.durationMs > 0 && readyMs >= stream.durationMs - 1);
+		const lastSample = Math.min(endSample, Math.floor((stream.durationMs / 1000) * SAMPLE_RATE));
+		const playable = Math.min(
+			endSample,
+			Math.floor((readyMs / 1000) * SAMPLE_RATE) - (whole ? 0 : LIMITER_LOOKAHEAD)
+		);
+
 		let starving = false;
-		while (this.nextCtx - now < AHEAD_S && this.nextSample < endSample) {
-			const fromMs = (this.nextSample / SAMPLE_RATE) * 1000;
-			const readyMs = stream.readyUntil(fromMs);
+		if (this.holding && this.nextSample < endSample) {
+			const lead = Math.min(
+				Math.floor((LEAD_MS / 1000) * SAMPLE_RATE),
+				endSample - this.nextSample
+			);
+			if (playable - this.nextSample >= lead || (whole && playable >= lastSample))
+				this.holding = false;
+			else starving = true;
+		}
+		while (!starving && this.nextCtx - now < AHEAD_S && this.nextSample < endSample) {
 			const toSample = Math.min(
-				Math.floor((readyMs / 1000) * SAMPLE_RATE),
-				this.nextSample + Math.floor((CHUNK_MS / 1000) * SAMPLE_RATE),
-				endSample
+				playable,
+				this.nextSample + Math.floor((CHUNK_MS / 1000) * SAMPLE_RATE)
 			);
 			if (toSample - this.nextSample < (MIN_CHUNK_MS / 1000) * SAMPLE_RATE) {
-				starving = this.nextSample < endSample;
+				starving = true;
 				break;
 			}
 			this.schedule(ctx, stream.buffer, this.nextSample, toSample);
@@ -276,8 +302,10 @@ class PlaybackState {
 		const playedMs = (this.nextSample / SAMPLE_RATE) * 1000 - queued * 1000;
 		this.positionMs = Math.max(this.positionMs, this.startedFrom, playedMs);
 
+		// Out of audio to play: from now on wait for a proper lead.
+		if (starving && queued < 0.04 && this.nextSample < endSample) this.holding = true;
 		const wasBuffering = this.buffering;
-		this.buffering = starving && queued < 0.04;
+		this.buffering = this.holding && queued < 0.04 && this.nextSample < endSample;
 		if (this.buffering !== wasBuffering && this.run) this.syncStream(this.run);
 
 		if (this.nextSample >= endSample && queued <= 0.01) {
@@ -289,8 +317,10 @@ class PlaybackState {
 	}
 
 	private schedule(ctx: AudioContext, pcm: Float32Array, from: number, to: number) {
+		const limited = limit(pcm, from, to, DEFAULT_CEILING);
+		this.limiterGain = limited.minGain;
 		const piece = ctx.createBuffer(1, to - from, SAMPLE_RATE);
-		piece.copyToChannel(pcm.subarray(from, to) as Float32Array<ArrayBuffer>, 0);
+		piece.copyToChannel(limited.pcm as Float32Array<ArrayBuffer>, 0);
 		const source = ctx.createBufferSource();
 		source.buffer = piece;
 		source.connect(ctx.destination);
@@ -461,11 +491,12 @@ class PlaybackState {
 	async exportWav() {
 		if ((this.isStale || !this.completed) && !(await this.render())) return;
 		const source = this.buffer!.getChannelData(0);
-		// Playback is not normalized; a file is: quiet or clipping mixes are brought to a sensible level.
+		// Playback is limited on the fly; the file gets the same limiter, and quiet mixes are brought up first.
 		let peak = 0;
 		for (const v of source) peak = Math.max(peak, Math.abs(v));
-		const gain = peak > 0.001 && (peak < 0.8 || peak > 1) ? 0.95 / peak : 1;
-		const pcm = gain === 1 ? source : source.map((v) => v * gain);
+		const boost = peak > 0.001 && peak < 0.8 ? 0.95 / peak : 1;
+		const mix = boost === 1 ? source : source.map((v) => v * boost);
+		const pcm = limit(mix, 0, mix.length, DEFAULT_CEILING).pcm;
 		downloadBlob(encodeWav(pcm, SAMPLE_RATE), `${safeFilename(project.name)}.wav`, 'audio/wav');
 		ui.toast('WAV exported.', 'success');
 	}
