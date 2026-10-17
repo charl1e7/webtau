@@ -155,7 +155,7 @@
 		</div>
 		<label class="check">
 			<input type="checkbox" bind:checked={settings.data.backgroundAnalysis} />
-			Analyze the whole voicebank in the background after loading
+			Analyze the whole voicebank in the background after loading (off: samples are analyzed when rendered)
 		</label>
 		<div class="field">
 			<span class="label">Analysis cache: {cacheInfo}</span>

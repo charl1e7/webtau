@@ -16,6 +16,8 @@
 	/** The list shows everything until the user starts typing. */
 	let typed = $state(false);
 	let openedFor: string | null = null;
+	/** The list entry a finger/mouse went down on; it is picked only if the same pointer lifts without scrolling. */
+	let press: { id: number; x: number; y: number; alias: string } | null = null;
 
 	const note = $derived(
 		c.editingLyricId ? project.notes.find((n) => n.id === c.editingLyricId) : null
@@ -72,6 +74,8 @@
 		const w = Math.max(110, note.length * c.ppt);
 		return `left:${x}px; top:${y}px; width:${w}px; height:${c.keyH}px;`;
 	});
+	/** On phones the list must fit between the editor and the bottom of the roll, or part of it is clipped. */
+	const maxListHeight = $derived(Math.max(96, Math.min(c.height - RULER_H - 70, 320)));
 	const below = $derived(note ? c.rowTop(note.pitch) < 200 : false);
 
 	function commit(value = text, advance = false) {
@@ -92,6 +96,21 @@
 
 	function cancel() {
 		c.editingLyricId = null;
+	}
+
+	// Picking is driven by pointer events on the list itself instead of `click`: a click can also be
+	// the tail of the double-tap that opened the editor, and the browser cancels the pointer when a
+	// swipe turns into a scroll, so scrolling can never pick.
+	function listDown(e: PointerEvent) {
+		const li = (e.target as HTMLElement).closest<HTMLElement>('li[data-alias]');
+		press = li ? { id: e.pointerId, x: e.clientX, y: e.clientY, alias: li.dataset.alias! } : null;
+	}
+
+	function listUp(e: PointerEvent) {
+		const p = press;
+		press = null;
+		if (!p || p.id !== e.pointerId) return;
+		if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 10) commit(p.alias);
 	}
 
 	function key(e: KeyboardEvent) {
@@ -137,15 +156,22 @@
 			aria-label="Lyric"
 		/>
 		{#if matches.length}
-			<!-- Keep the input focused while the list is touched; picking happens on click (a scroll gesture produces none). -->
-			<ul bind:this={list} role="listbox" onmousedown={(e) => e.preventDefault()}>
+			<!-- Keep the input focused while the list is touched. -->
+			<ul
+				bind:this={list}
+				role="listbox"
+				style={ui.compact ? `max-height:${maxListHeight}px` : undefined}
+				onmousedown={(e) => e.preventDefault()}
+				onpointerdown={listDown}
+				onpointerup={listUp}
+				onpointercancel={() => (press = null)}
+			>
 				{#each matches as alias, i (alias)}
-					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<li
 						role="option"
 						aria-selected={i === index}
 						class:active={i === index}
-						onclick={() => commit(alias)}
+						data-alias={alias}
 					>
 						{alias}
 					</li>
@@ -221,9 +247,15 @@
 		padding: 10px 14px;
 		font-size: 15px;
 	}
-	li.active,
-	li:hover {
+	li.active {
 		background: var(--accent);
 		color: var(--accent-contrast);
+	}
+	/* Touch screens keep :hover on the last touched entry, which looked like a second selection. */
+	@media (hover: hover) {
+		li:hover {
+			background: var(--accent);
+			color: var(--accent-contrast);
+		}
 	}
 </style>
