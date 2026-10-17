@@ -13,6 +13,8 @@
 	let list = $state<HTMLUListElement>();
 	let text = $state('');
 	let index = $state(0);
+	/** The list shows everything until the user starts typing. */
+	let typed = $state(false);
 	let openedFor: string | null = null;
 
 	const note = $derived(
@@ -20,7 +22,7 @@
 	);
 
 	const matches = $derived.by(() => {
-		const q = text.trim().toLowerCase();
+		const q = typed ? text.trim().toLowerCase() : '';
 		const all = voicebank.aliases;
 		if (!q) return all.slice(0, 60);
 		const starts: string[] = [];
@@ -49,6 +51,7 @@
 			openedFor = note.id;
 			text = note.lyric;
 			index = 0;
+			typed = false;
 			void tick().then(() => {
 				input?.focus();
 				input?.select();
@@ -121,7 +124,10 @@
 		<input
 			bind:this={input}
 			bind:value={text}
-			oninput={() => (index = 0)}
+			oninput={() => {
+				index = 0;
+				typed = true;
+			}}
 			onkeydown={key}
 			onblur={() => c.editingLyricId && commit()}
 			autocomplete="off"
@@ -131,16 +137,15 @@
 			aria-label="Lyric"
 		/>
 		{#if matches.length}
-			<ul bind:this={list} role="listbox">
+			<!-- Keep the input focused while the list is touched; picking happens on click (a scroll gesture produces none). -->
+			<ul bind:this={list} role="listbox" onmousedown={(e) => e.preventDefault()}>
 				{#each matches as alias, i (alias)}
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<li
 						role="option"
 						aria-selected={i === index}
 						class:active={i === index}
-						onpointerdown={(e) => {
-							e.preventDefault();
-							commit(alias);
-						}}
+						onclick={() => commit(alias)}
 					>
 						{alias}
 					</li>
@@ -185,6 +190,8 @@
 		max-width: 260px;
 		max-height: 190px;
 		overflow-y: auto;
+		overscroll-behavior: contain;
+		touch-action: pan-y;
 		margin: 0 0 4px;
 		padding: 4px 0;
 		list-style: none;

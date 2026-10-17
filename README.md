@@ -62,11 +62,23 @@ npm run dev                   # http://localhost:5173
 | `npm run dev` / `npm run build`            | Vite dev server / production build (`build/`) |
 | `npm run lint` · `npm run check`           | Prettier + ESLint · svelte-check              |
 | `npm test`                                 | Unit tests (core, UST, MIDI, project files)   |
+| `npm run test:e2e`                         | Browser tests (Playwright) on desktop + phone |
 | `cargo test -p w-synth --release`          | Unit tests of the Rust engine                 |
 | `node scripts/bench-analysis.mjs <dir> 15` | Benchmark of the sample analyzer in Node      |
 
 Set `BASE_PATH=/webtau` when building for GitHub Pages. Opening the app with `?debug` exposes the
 state modules as `window.webtau` for debugging.
+
+### Testing
+
+- **Unit tests** (`npm test`, `cargo test`) cover the editor core, file formats and the engine.
+- **Browser tests** (`npm run test:e2e`, in `tests/e2e`) drive the built app in Chromium with a
+  _desktop_ and a _phone_ project (touch events, pinch, long-press). They build a small synthetic
+  voicebank, and every test fails on uncaught exceptions or `console.error`. Besides feature flows
+  they check things that are easy to break unnoticed: every dialog / menu / sheet can be closed,
+  scrolling a list never "clicks" an item, controls have accessible names and big enough touch
+  targets, nothing is clipped or scrolls sideways.
+  Run `npm run build` first; set `PW_CHROMIUM_PATH` to use an existing Chromium.
 
 ### Architecture
 

@@ -286,7 +286,7 @@
 			font-size: 15px;
 		}
 		.compact-tempo {
-			min-height: 32px;
+			min-height: 38px;
 			padding: 0 9px;
 			margin: 0 0 0 2px;
 		}

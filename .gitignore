@@ -24,3 +24,7 @@ vite.config.ts.timestamp-*
 
 .vscode
 .idea
+# e2e artifacts
+/tests/.tmp
+/test-results
+/playwright-report

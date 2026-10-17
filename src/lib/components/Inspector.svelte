@@ -123,11 +123,12 @@
 				<div class="track" class:active={t.id === project.activeTrack}>
 					<button
 						class="swatch"
-						style:background={t.color}
 						title="Make this track active"
 						aria-label="Make {t.name} the active track"
 						onclick={() => (project.activeTrack = t.id)}
-					></button>
+					>
+						<span class="dot" style:background={t.color}></span>
+					</button>
 					<input
 						type="text"
 						value={t.name}
@@ -417,7 +418,8 @@
 	}
 	.track {
 		display: grid;
-		grid-template-columns: 22px 1fr auto auto auto;
+		grid-template-columns: var(--hit) 1fr auto auto auto;
+		align-items: center;
 		gap: 4px 6px;
 		align-items: center;
 		padding: 8px;
@@ -433,6 +435,12 @@
 		grid-column: 2 / -1;
 	}
 	.swatch {
+		width: var(--hit);
+		height: var(--hit);
+		display: grid;
+		place-items: center;
+	}
+	.swatch .dot {
 		width: 22px;
 		height: 22px;
 		border-radius: 50%;
@@ -441,8 +449,8 @@
 			0 0 10px currentColor;
 	}
 	.icon-btn.small {
-		width: 30px;
-		height: 30px;
+		width: max(30px, calc(var(--hit) - 6px));
+		height: max(30px, calc(var(--hit) - 6px));
 		font-size: 12px;
 		font-weight: 700;
 	}
