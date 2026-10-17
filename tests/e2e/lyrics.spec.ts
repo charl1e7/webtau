@@ -187,4 +187,39 @@ NoteNum=65
 		await app.eval((w) => w.lyrics.offerFix());
 		expect(await app.eval((w) => w.ui.dialog)).toBe('lyric-doctor');
 	});
+
+	test('the fill-lyrics dialog can cut romaji into syllables', async ({ app, page }) => {
+		await app.setNotes([
+			{ tick: 0, pitch: 60 },
+			{ tick: 480, pitch: 62 },
+			{ tick: 960, pitch: 64 }
+		]);
+		await app.eval((w) => w.project.selectAll());
+		await app.eval((w) => w.ui.openDialog('lyrics'));
+		const dialog = page.getByRole('dialog', { name: 'Fill lyrics' });
+		await dialog.getByLabel('Lyrics', { exact: true }).fill('sakura');
+		await dialog.getByRole('checkbox', { name: /Cut unbroken romaji/ }).check();
+		await app.press(dialog.getByRole('button', { name: 'Apply' }));
+		expect(await lyricsOf(app)).toEqual(['sa', 'ku', 'ra']);
+	});
+
+	test('a plugin registered at runtime takes part without any core change', async ({ app }) => {
+		await app.setNotes([
+			{ tick: 0, pitch: 60, lyric: 'sakura-san' },
+			{ tick: 480, pitch: 62, lyric: 'ka' }
+		]);
+		expect((await resolution(app, 0))?.status).toBe('missing');
+		await app.eval((w) =>
+			w.plugins.register({
+				id: 'test.honorifics',
+				name: 'Honorifics',
+				description: 'Drops -san',
+				candidates: (lyric: string) =>
+					lyric.endsWith('-san') ? [{ alias: 'sa', score: 0.9, why: 'honorific' }] : []
+			})
+		);
+		expect(await resolution(app, 0)).toEqual({ status: 'mapped', alias: 'sa' });
+		await app.eval((w) => w.plugins.setEnabled('test.honorifics', false));
+		expect((await resolution(app, 0))?.status).toBe('missing');
+	});
 });

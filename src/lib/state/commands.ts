@@ -416,11 +416,11 @@ export const edit = {
 
 	setLyric: (id: string, lyric: string) => project.updateNote(id, { lyric }, `lyric:${id}`),
 
-	applyLyrics: (text: string) => {
+	applyLyrics: (text: string, options: { romaji?: boolean } = {}) => {
 		const ids = project.selection.size
 			? project.selection
 			: new Set(project.notes.map((n) => n.id));
-		project.edit((notes) => applyLyrics(notes, ids, text));
+		project.edit((notes) => applyLyrics(notes, ids, text, options));
 	},
 
 	/** Adds a note at the end of the song, or after the selection. */

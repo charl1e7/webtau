@@ -35,7 +35,8 @@
 
 	// ---- lyrics --------------------------------------------------------------------------------
 	let lyricsText = $state('');
-	const syllables = $derived(splitLyrics(lyricsText));
+	let splitRomaji = $state(false);
+	const syllables = $derived(splitLyrics(lyricsText, { romaji: splitRomaji }));
 	const lyricTargets = $derived(project.selection.size || project.notes.length);
 
 	// ---- tempo ---------------------------------------------------------------------------------
@@ -237,13 +238,17 @@
 				{project.selection.size ? 'selected' : ''} note(s). Notes are filled in time order.
 			</span>
 		</div>
+		<label class="check">
+			<input type="checkbox" bind:checked={splitRomaji} />
+			Cut unbroken romaji into syllables (sakura → sa ku ra)
+		</label>
 		{#snippet footer()}
 			<button class="btn" onclick={ui.closeDialog}>Cancel</button>
 			<button
 				class="btn primary"
 				disabled={!syllables.length}
 				onclick={() => {
-					edit.applyLyrics(lyricsText);
+					edit.applyLyrics(lyricsText, { romaji: splitRomaji });
 					ui.closeDialog();
 				}}>Apply</button
 			>

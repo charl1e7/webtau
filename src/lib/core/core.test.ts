@@ -68,6 +68,14 @@ describe('lyrics', () => {
 		expect(splitLyrics('la la, la')).toEqual(['la', 'la', 'la']);
 	});
 
+	it('optionally cuts unbroken romaji into syllables, leaving everything else alone', () => {
+		const romaji = { romaji: true };
+		expect(splitLyrics('sakura', romaji)).toEqual(['sa', 'ku', 'ra']);
+		expect(splitLyrics('kyaku shinjitsu', romaji)).toEqual(['kya', 'ku', 'shi', 'n', 'ji', 'tsu']);
+		expect(splitLyrics('hello + R ka[mi]', romaji)).toEqual(['hello', '+', 'R', 'ka[mi]']);
+		expect(splitLyrics('sakura')).toEqual(['sakura']); // off by default
+	});
+
 	it('assigns syllables in time order', () => {
 		const a = createNote({ tick: 480, pitch: 60 });
 		const b = createNote({ tick: 0, pitch: 60 });
