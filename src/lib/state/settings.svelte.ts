@@ -15,6 +15,8 @@ export interface SettingsData {
 	snap: boolean;
 	playbackStart: PlaybackStart;
 	followPlayhead: boolean;
+	/** Keep rendering while paused (off: a render that is not finished stops with playback and resumes from the cache). */
+	backgroundRender: boolean;
 	/** 0 = choose automatically. */
 	analysisWorkers: number;
 	analysisQuality: AnalysisQuality;
@@ -45,6 +47,7 @@ const DEFAULTS: SettingsData = {
 	snap: true,
 	playbackStart: 'cursor',
 	followPlayhead: true,
+	backgroundRender: false,
 	analysisWorkers: 0,
 	analysisQuality: 'fast',
 	backgroundAnalysis: false,
