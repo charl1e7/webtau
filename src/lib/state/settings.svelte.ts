@@ -34,7 +34,7 @@ const DEFAULTS: SettingsData = {
 	followPlayhead: true,
 	analysisWorkers: 0,
 	analysisQuality: 'fast',
-	backgroundAnalysis: true,
+	backgroundAnalysis: false,
 	showNoteNames: true,
 	touchMode: 'auto',
 	theme: 'dark',
@@ -42,7 +42,7 @@ const DEFAULTS: SettingsData = {
 	rightWidth: 296,
 	leftOpen: true,
 	rightOpen: true,
-	settingsVersion: 2
+	settingsVersion: 3
 };
 
 const STORAGE_KEY = 'webtau:settings';
@@ -55,6 +55,8 @@ function load(): SettingsData {
 		const data: SettingsData = { ...DEFAULTS, ...stored };
 		// v2: the fast DIO analyzer became the default; apply it to older stored settings once.
 		if ((stored.settingsVersion ?? 1) < 2) data.analysisQuality = 'fast';
+		// v3: analyzing everything in the background is opt-in (rendering caches what it needs).
+		if ((stored.settingsVersion ?? 1) < 3) data.backgroundAnalysis = false;
 		data.settingsVersion = DEFAULTS.settingsVersion;
 		return data;
 	} catch {

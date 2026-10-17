@@ -11,6 +11,11 @@ test.describe('audio engine in the browser', () => {
 		expect(await app.eval((w) => w.voicebank.current.name)).toBe('Test Bank');
 	});
 
+	test('does not analyze the whole voicebank in the background by default', async ({ app }) => {
+		expect(await app.eval((w) => w.settings.data.backgroundAnalysis)).toBe(false);
+		expect(await app.eval((w) => w.voicebank.warmingUp)).toBe(false);
+	});
+
 	test('Play renders audible audio and re-renders only what changed', async ({ app, page }) => {
 		await app.setNotes([
 			{ tick: 0, pitch: 60, lyric: 'ka' },
@@ -98,7 +103,8 @@ test.describe('audio engine in the browser', () => {
 			.toBeGreaterThan(0);
 	});
 
-	test('background analysis eventually covers the whole voicebank', async ({ app }) => {
+	test('"analyze everything" covers the whole voicebank on request', async ({ app }) => {
+		await app.eval((w) => w.voicebank.analyzeAll());
 		await expect.poll(() => app.eval((w) => w.voicebank.stats.ready), { timeout: 60_000 }).toBe(25);
 	});
 });

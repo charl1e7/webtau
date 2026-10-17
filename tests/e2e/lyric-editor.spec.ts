@@ -71,3 +71,64 @@ test.describe('lyric editor suggestions', () => {
 		expect(names.every((n) => n.includes('k'))).toBe(true);
 	});
 });
+
+test.describe('lyric editor opened by gesture (phone)', () => {
+	test.beforeEach(async ({ app }) => {
+		test.skip(!app.isMobile, 'touch gesture');
+		await app.loadVoicebank();
+		await app.setNotes([{ tick: 480, length: 960, pitch: 62, lyric: 'a' }]);
+		await app.selectTool('Select / move');
+		await app.settle(500);
+	});
+
+	test('double-tapping a note opens the list and the lifted finger does not pick from it', async ({
+		app,
+		touch,
+		page
+	}) => {
+		const p = await app.point(960, 62);
+		await touch.tap(p.x, p.y);
+		await page.waitForTimeout(120);
+		await touch.tap(p.x, p.y);
+		await page.waitForTimeout(600);
+		await expect(page.getByRole('listbox')).toBeVisible();
+		expect((await app.notes)[0].lyric).toBe('a');
+	});
+
+	test('the very first swipe over a fresh list scrolls it and highlights only one entry', async ({
+		app,
+		touch,
+		page
+	}) => {
+		await app.eval((w) => {
+			w.ui.requestLyricEdit = w.project.notes[0].id;
+		});
+		const list = page.getByRole('listbox');
+		await expect(list).toBeVisible();
+		await page.waitForTimeout(300);
+		const box = (await list.boundingBox())!;
+		const x = box.x + box.width / 2;
+		await touch.drag({ x, y: box.y + box.height - 20 }, { x, y: box.y + 30 }, 10);
+		await page.waitForTimeout(300);
+		expect(await list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+		const lit = await list.evaluate((el) => {
+			const colors = [...el.querySelectorAll('li')].map(
+				(li) => getComputedStyle(li).backgroundColor
+			);
+			return colors.filter((c) => c === colors.find((x) => x !== colors[colors.length - 1])).length;
+		});
+		expect(lit).toBe(1);
+		expect((await app.notes)[0].lyric).toBe('a');
+	});
+
+	test('the list stays inside the roll so nothing is clipped', async ({ app, page }) => {
+		await app.eval((w) => {
+			w.ui.requestLyricEdit = w.project.notes[0].id;
+		});
+		const list = page.getByRole('listbox');
+		await expect(list).toBeVisible();
+		const roll = (await page.locator('#piano-roll').boundingBox())!;
+		const box = (await list.boundingBox())!;
+		expect(box.y + box.height).toBeLessThanOrEqual(roll.y + roll.height + 1);
+	});
+});
