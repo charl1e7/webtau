@@ -8,12 +8,12 @@ import { expect, test, type App } from './fixtures';
 const LYRICS = ['ka', 'sa', 'mi', 'ta', 'a', 'ke', 'su', 'mo'];
 
 /** `count` notes of 300 ms (half a beat at 120 BPM is 240 ticks; 288 ticks ≈ 300 ms). */
-async function longSong(app: App, count: number) {
+async function longSong(app: App, count: number, shift = 0) {
 	await app.setNotes(
 		Array.from({ length: count }, (_, i) => ({
 			tick: i * 288,
 			length: 288,
-			pitch: 57 + ((i * 5) % 12),
+			pitch: 57 + shift + ((i * 5) % 12),
 			lyric: LYRICS[i % LYRICS.length]
 		}))
 	);
@@ -185,7 +185,7 @@ test.describe('progressive rendering', () => {
 		app
 	}) => {
 		await renderInBackground(app);
-		await longSong(app, 200);
+		await longSong(app, 1500);
 		await app.eval((w) => void w.playback.play());
 		await expect
 			.poll(() => app.eval((w) => w.playback.positionMs), { timeout: 20_000 })
@@ -338,7 +338,8 @@ test.describe('progressive rendering', () => {
 	});
 
 	test('rendering stops with playback unless background rendering is on', async ({ app }) => {
-		await longSong(app, 400);
+		// Long enough that the render cannot finish within the test, even on a fast machine.
+		await longSong(app, 1500);
 		expect(await app.eval((w) => w.settings.data.backgroundRender)).toBe(false);
 		await app.eval((w) => void w.playback.play());
 		await expect.poll(() => done(app), { timeout: 20_000 }).toBeGreaterThan(0.02);
@@ -355,12 +356,14 @@ test.describe('progressive rendering', () => {
 			.toBeGreaterThan(1000);
 		await app.eval((w) => w.playback.pause());
 
-		// With the option on, it goes on while paused.
+		// With the option on, it goes on while paused. New pitches, so that nothing is in the cache.
+		await longSong(app, 1500, 3);
 		await app.eval((w) => (w.settings.data.backgroundRender = true));
 		await app.eval((w) => void w.playback.play());
 		await expect.poll(() => done(app), { timeout: 20_000 }).toBeGreaterThan(0.02);
 		await app.eval((w) => w.playback.pause());
 		const paused = await done(app);
+		expect(paused).toBeLessThan(1);
 		await expect.poll(() => done(app), { timeout: 20_000 }).toBeGreaterThan(paused);
 		await app.eval((w) => w.playback.stop());
 	});
