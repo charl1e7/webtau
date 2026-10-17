@@ -59,6 +59,18 @@ test.describe('audio engine in the browser', () => {
 		void page;
 	});
 
+	test('a track with an unknown renderer id still renders with the default backend', async ({
+		app
+	}) => {
+		await app.setNotes([{ tick: 0, pitch: 60, lyric: 'ka' }]);
+		await app.eval((w) =>
+			w.project.updateTrack(w.project.tracks[0].id, { renderer: 'from-a-newer-version' })
+		);
+		await app.eval((w) => w.playback.render());
+		expect(await app.eval((w) => w.playback.status)).toBe('ready');
+		expect(await app.eval((w) => w.playback.message)).toMatch(/Rendered 1/);
+	});
+
 	test('lyrics that are not in the voicebank are flagged', async ({ app }) => {
 		await app.setNotes([
 			{ tick: 0, pitch: 60, lyric: 'ka' },

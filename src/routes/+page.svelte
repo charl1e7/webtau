@@ -17,6 +17,8 @@
 	import { playback } from '#lib/state/playback.svelte';
 	import { project } from '#lib/state/project.svelte';
 	import { settings } from '#lib/state/settings.svelte';
+	import { lyrics } from '#lib/state/lyrics.svelte';
+	import { plugins } from '#lib/state/plugins.svelte';
 	import { ui } from '#lib/state/ui.svelte';
 	import { view } from '#lib/state/view.svelte';
 	import { voicebank } from '#lib/state/voicebank.svelte';
@@ -28,7 +30,19 @@
 		// Handy for debugging and automated tests: open the app with ?debug.
 		if (new URLSearchParams(location.search).has('debug')) {
 			Object.assign(window, {
-				webtau: { project, playback, voicebank, ui, view, settings, file, edit, roll: rollHandle }
+				webtau: {
+					project,
+					playback,
+					voicebank,
+					ui,
+					view,
+					settings,
+					file,
+					edit,
+					lyrics,
+					plugins,
+					roll: rollHandle
+				}
 			});
 		}
 		if (!new URLSearchParams(location.search).has('fresh') && project.restoreAutosave())

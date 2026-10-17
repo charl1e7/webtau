@@ -24,6 +24,8 @@ import { parseVsqx } from '#lib/io/vsqx';
 import { createTrack } from '#lib/core/music';
 import { decodeText } from '#lib/io/text';
 import { MIN_NOTE_TICKS, type Note } from '#lib/core/types';
+import { formats } from '#lib/io/format-registry';
+import { lyrics } from './lyrics.svelte';
 import { playback } from './playback.svelte';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
@@ -53,6 +55,12 @@ export function pickFiles(accept: string, multiple = false): Promise<File[]> {
 }
 
 const readBytes = async (file: File) => new Uint8Array(await file.arrayBuffer());
+
+/** Replaces the project with imported content and points out lyrics the voicebank cannot sing. */
+function loadImported(data: Parameters<typeof project.load>[0]) {
+	project.load(data);
+	lyrics.offerFix();
+}
 
 function confirmDiscard(): boolean {
 	return !project.dirty || project.notes.length === 0 || confirm('Discard unsaved changes?');
@@ -94,19 +102,27 @@ export const file = {
 
 	open: guard(async () => {
 		const [f] = await pickFiles('.json,.webtau,application/json');
-		if (!f || !confirmDiscard()) return;
-		playback.stop();
-		project.load(parseProject(await f.text()));
-		ui.toast(`Opened “${project.name}”.`, 'success');
+		if (f) await file.openProject(f);
 	}),
+
+	openProject: async (f: File) => {
+		if (!confirmDiscard()) return;
+		playback.stop();
+		project.load(parseProject(decodeText(await readBytes(f))));
+		ui.toast(`Opened “${project.name}”.`, 'success');
+	},
 
 	importUst: guard(async () => {
 		const [f] = await pickFiles('.ust');
-		if (!f || !confirmDiscard()) return;
+		if (f) await file.openUst(f);
+	}),
+
+	openUst: async (f: File) => {
 		const ust = parseUst(await readBytes(f));
 		if (!ust.notes.length) throw new Error('The UST file contains no notes.');
+		if (!confirmDiscard()) return;
 		playback.stop();
-		project.load({
+		loadImported({
 			name: ust.name || f.name.replace(/\.ust$/i, ''),
 			notes: ust.notes,
 			tempos: ust.tempos,
@@ -118,19 +134,23 @@ export const file = {
 			'success'
 		);
 		ust.warnings.forEach((w) => ui.toast(w));
-	}),
+	},
 
 	importUstx: guard(async () => {
 		const [f] = await pickFiles('.ustx');
-		if (!f || !confirmDiscard()) return;
-		file.applyUstx(await readBytes(f), f.name);
+		if (f) await file.openUstx(f);
 	}),
+
+	openUstx: async (f: File) => {
+		if (!confirmDiscard()) return;
+		file.applyUstx(await readBytes(f), f.name);
+	},
 
 	applyUstx: (bytes: Uint8Array, fileName: string) => {
 		const ustx = parseUstx(bytes);
 		if (!ustx.notes.length) throw new Error('The USTX file contains no notes.');
 		playback.stop();
-		project.load({
+		loadImported({
 			name: ustx.name || fileName.replace(/\.ustx$/i, ''),
 			notes: ustx.notes,
 			tracks: ustx.tracks,
@@ -182,13 +202,16 @@ export const file = {
 
 	importMidi: guard(async () => {
 		const [f] = await pickFiles('.mid,.midi,audio/midi');
-		if (!f) return;
+		if (f) await file.openMidi(f);
+	}),
+
+	openMidi: async (f: File) => {
 		const midi = parseMidi(await readBytes(f));
 		const withNotes = midi.tracks.filter((t) => t.noteCount > 0);
 		if (!withNotes.length) throw new Error('The MIDI file contains no notes.');
 		if (withNotes.length === 1) file.applyMidi(midi, withNotes[0].index, f.name);
 		else ui.openDialog('midi', { midi, fileName: f.name });
-	}),
+	},
 
 	applyMidi: (midi: MidiFile, trackIndex: number, fileName: string) => {
 		if (!confirmDiscard()) return;
@@ -197,7 +220,7 @@ export const file = {
 		const lyric = settings.data.defaultLyric || 'a';
 		const notes = track.notes.map((n) => (n.lyric === 'a' ? { ...n, lyric } : n));
 		playback.stop();
-		project.load({ name: fileName.replace(/\.midi?$/i, ''), notes, tempos: midi.tempos });
+		loadImported({ name: fileName.replace(/\.midi?$/i, ''), notes, tempos: midi.tempos });
 		ui.toast(`Imported ${notes.length} notes from “${track.name}”.`, 'success');
 	},
 
@@ -211,15 +234,19 @@ export const file = {
 			t.notes.map((n) => ({ ...n, track: tracks[i].id, lyric: n.lyric === 'a' ? lyric : n.lyric }))
 		);
 		playback.stop();
-		project.load({ name: fileName.replace(/\.midi?$/i, ''), notes, tracks, tempos: midi.tempos });
+		loadImported({ name: fileName.replace(/\.midi?$/i, ''), notes, tracks, tempos: midi.tempos });
 		ui.toast(`Imported ${withNotes.length} tracks, ${notes.length} notes.`, 'success');
 	},
 
 	importVsqx: guard(async () => {
 		const [f] = await pickFiles('.vsqx');
-		if (!f || !confirmDiscard()) return;
-		await file.applyVsqx(await f.text(), f.name);
+		if (f) await file.openVsqx(f);
 	}),
+
+	openVsqx: async (f: File) => {
+		if (!confirmDiscard()) return;
+		await file.applyVsqx(await f.text(), f.name);
+	},
 
 	applyVsqx: async (xml: string, fileName: string) => {
 		const v = parseVsqx(xml);
@@ -227,7 +254,7 @@ export const file = {
 		const tracks = v.tracks.map((t, i) => createTrack(i, { name: t.name }));
 		const notes = v.tracks.flatMap((t, i) => t.notes.map((n) => ({ ...n, track: tracks[i].id })));
 		playback.stop();
-		project.load({
+		loadImported({
 			name: fileName.replace(/\.vsqx$/i, ''),
 			notes,
 			tracks,
@@ -256,35 +283,53 @@ export const file = {
 
 	exportWav: guard(() => playback.exportWav()),
 
-	/** Opens a project, UST or MIDI that was dropped onto the window. */
+	/** Opens a file that was dropped onto the window, by whichever format claims its extension. */
 	openDropped: guard(async (f: File) => {
-		const name = f.name.toLowerCase();
-		if (name.endsWith('.ust')) {
-			const ust = parseUst(await readBytes(f));
-			if (!confirmDiscard()) return;
-			project.load({
-				name: ust.name,
-				notes: ust.notes,
-				tempos: ust.tempos,
-				voicebank: ust.voicebank
-			});
-			ui.toast(`Imported ${ust.notes.length} notes from UST.`, 'success');
-		} else if (name.endsWith('.ustx')) {
-			if (!confirmDiscard()) return;
-			file.applyUstx(await readBytes(f), f.name);
-		} else if (name.endsWith('.mid') || name.endsWith('.midi')) {
-			const midi = parseMidi(await readBytes(f));
-			const withNotes = midi.tracks.filter((t) => t.noteCount > 0);
-			if (withNotes.length === 1) file.applyMidi(midi, withNotes[0].index, f.name);
-			else if (withNotes.length) ui.openDialog('midi', { midi, fileName: f.name });
-		} else if (name.endsWith('.vsqx')) {
-			await file.applyVsqx(await f.text(), f.name);
-		} else if (name.endsWith('.json') || name.endsWith('.webtau')) {
-			if (!confirmDiscard()) return;
-			project.load(parseProject(decodeText(await readBytes(f))));
-		}
+		await formats.forFile(f.name)?.openFile?.(f);
 	})
 };
+
+// ---- formats ---------------------------------------------------------------------------
+// One registration per format: the File menu and drag and drop are built from this list.
+
+formats
+	.register({
+		id: 'wav',
+		extensions: [],
+		export: { label: 'Export WAV', hint: 'Ctrl+E', action: file.exportWav }
+	})
+	.register({
+		id: 'ust',
+		extensions: ['.ust'],
+		import: { label: 'Import UST…', action: file.importUst },
+		export: { label: 'Export UST', action: file.exportUst },
+		openFile: file.openUst
+	})
+	.register({
+		id: 'ustx',
+		extensions: ['.ustx'],
+		import: { label: 'Import USTX (OpenUtau)…', action: file.importUstx },
+		export: { label: 'Export USTX (OpenUtau)', action: file.exportUstx },
+		openFile: file.openUstx
+	})
+	.register({
+		id: 'midi',
+		extensions: ['.mid', '.midi'],
+		import: { label: 'Import MIDI…', action: file.importMidi },
+		export: { label: 'Export MIDI', action: file.exportMidi },
+		openFile: file.openMidi
+	})
+	.register({
+		id: 'vsqx',
+		extensions: ['.vsqx'],
+		import: { label: 'Import VSQX (VOCALOID)…', action: file.importVsqx },
+		openFile: file.openVsqx
+	})
+	.register({
+		id: 'project',
+		extensions: ['.json', '.webtau'],
+		openFile: file.openProject
+	});
 
 // ---- edit commands ----------------------------------------------------------------
 
@@ -371,11 +416,11 @@ export const edit = {
 
 	setLyric: (id: string, lyric: string) => project.updateNote(id, { lyric }, `lyric:${id}`),
 
-	applyLyrics: (text: string) => {
+	applyLyrics: (text: string, options: { romaji?: boolean } = {}) => {
 		const ids = project.selection.size
 			? project.selection
 			: new Set(project.notes.map((n) => n.id));
-		project.edit((notes) => applyLyrics(notes, ids, text));
+		project.edit((notes) => applyLyrics(notes, ids, text, options));
 	},
 
 	/** Adds a note at the end of the song, or after the selection. */

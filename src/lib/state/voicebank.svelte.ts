@@ -1,7 +1,9 @@
 import { loadFromEntry, loadFromFileList } from '#lib/voicebank/loader';
+import { AliasIndex } from '#lib/voicebank/alias-index';
 import type { Voicebank } from '#lib/voicebank/types';
 import type { AnalysisStats } from '#lib/engine/analysis';
 import { getEngine, onEngineStats } from './engine';
+import { renderers } from './renderers';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
 import { ui } from './ui.svelte';
@@ -15,18 +17,25 @@ class VoicebankState {
 	/** Changes whenever a different voicebank is loaded: invalidates rendered audio. */
 	revision = $state(0);
 	warmingUp = $state(false);
+	/** Called after a voicebank was loaded (other modules react without this one knowing them). */
+	readonly loadedListeners: (() => void)[] = [];
 
 	constructor() {
 		onEngineStats((s) => (this.stats = s));
 	}
 
 	aliases = $derived(this.current?.aliases ?? []);
+	/** What the loaded voicebank can sing, for matching lyrics (null while none is loaded). */
+	index = $derived.by(() => {
+		const vb = this.current;
+		if (!vb || !vb.aliases.length) return null;
+		return new AliasIndex(vb.aliases, vb.prefixMap ? new TextDecoder().decode(vb.prefixMap) : null);
+	});
 
 	async load(source: File[] | FileSystemEntry) {
 		if (this.loading) return;
 		this.loading = true;
 		try {
-			const engine = await getEngine();
 			const status = (m: string) => ui.setStatus(m);
 			const vb = Array.isArray(source)
 				? await loadFromFileList(source, status)
@@ -34,7 +43,9 @@ class VoicebankState {
 
 			status('Parsing voicebank…');
 			if (this.current?.image) URL.revokeObjectURL(this.current.image);
-			await engine.loadVoicebank(vb);
+			const usable = renderers.all().filter((r) => r.supports(vb));
+			if (!usable.length) throw new Error('No renderer can use this kind of voicebank.');
+			for (const renderer of usable) await renderer.load(vb);
 			this.current = vb;
 			this.revision++;
 			project.voicebankName = vb.name;
@@ -43,10 +54,11 @@ class VoicebankState {
 					(vb.generatedOto ? ' (oto.ini generated)' : ''),
 				'success'
 			);
+			for (const listener of this.loadedListeners) listener();
 
 			if (settings.data.backgroundAnalysis) {
 				this.warmingUp = true;
-				engine.warmUp(() => {
+				(await getEngine()).warmUp(() => {
 					this.warmingUp = false;
 					ui.setStatus(`All samples of “${vb.name}” are analyzed.`);
 				});

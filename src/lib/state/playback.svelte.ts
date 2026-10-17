@@ -1,10 +1,12 @@
 import { toEngineNotes } from '#lib/core/engine-notes';
 import { encodeWav } from '#lib/io/wav';
 import { downloadBlob, safeFilename } from '#lib/io/download';
-import { getEngine } from './engine';
+import { renderMixed, type RenderGroup } from '#lib/render/registry';
+import { renderers } from './renderers';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
 import { ui } from './ui.svelte';
+import { lyrics } from './lyrics.svelte';
 import { voicebank } from './voicebank.svelte';
 
 export type RenderStatus = 'idle' | 'analyzing' | 'rendering' | 'ready' | 'error';
@@ -58,14 +60,18 @@ class PlaybackState {
 		this.job?.cancel();
 
 		const key = this.key();
-		const { notes, ids } = toEngineNotes(project.notes, project.tempoMap, project.tracks);
+		const groups: RenderGroup[] = renderers
+			.plan(project.notes, project.tracks)
+			.map(({ backend, notes }) => ({
+				backend,
+				...toEngineNotes(notes, project.tempoMap, project.tracks, lyrics.alias)
+			}));
 		this.status = 'analyzing';
 		this.progress = 0;
 		this.message = 'Preparing samples…';
 
 		try {
-			const engine = await getEngine();
-			const job = engine.render(notes, project.primaryTempo, {
+			const job = renderMixed(groups, project.primaryTempo, {
 				onAnalyze: (done, total) => {
 					this.status = 'analyzing';
 					this.progress = total ? done / total : 0;
@@ -92,19 +98,18 @@ class PlaybackState {
 			this.renderedKey = key;
 			this.durationMs = buffer.duration * 1000;
 
-			const { report } = outcome;
-			this.unknownLyrics = new Set(report.missing_alias.map((i) => ids[i]));
+			this.unknownLyrics = new Set(outcome.missingAlias);
 			this.status = 'ready';
 			this.progress = 1;
-			this.message = `Rendered ${report.rendered}, reused ${report.cached}`;
+			this.message = `Rendered ${outcome.rendered}, reused ${outcome.cached}`;
 			ui.setStatus(this.message);
-			if (report.missing_alias.length) {
+			if (outcome.missingAlias.length) {
 				ui.toast(
-					`${report.missing_alias.length} note(s) have lyrics that are not in the voicebank (marked in red).`,
+					`${outcome.missingAlias.length} note(s) have lyrics that are not in the voicebank (marked in red).`,
 					'error'
 				);
 			}
-			if (report.errors.length) console.warn('[render]', report.errors);
+			if (outcome.errors.length) console.warn('[render]', outcome.errors);
 			return true;
 		} catch (error) {
 			this.job = null;
@@ -238,9 +243,13 @@ class PlaybackState {
 		const pressedAt = performance.now();
 		this.beep(pitch); // instant feedback while the voice is rendered
 		try {
-			const engine = await getEngine();
+			const resolved = lyrics.preview(lyric, pitch);
+			const alias =
+				resolved && resolved.status !== 'missing' && resolved.status !== 'rest'
+					? resolved.alias
+					: lyric;
 			const note = {
-				alias: lyric,
+				alias,
 				pitch,
 				start_time: 0,
 				duration: 500,
@@ -250,7 +259,8 @@ class PlaybackState {
 				volume: 100,
 				modulation: 0
 			};
-			const out = await engine.render([note], project.primaryTempo).promise;
+			const backend = renderers.forTrack(project.tracks.find((t) => t.id === project.activeTrack));
+			const out = await backend.render([note], project.primaryTempo).promise;
 			if (!out || out.report.missing_alias.length || out.report.missing_features.length) return;
 			const samples = out.pcm.subarray(0, Math.floor(SAMPLE_RATE * 0.75));
 			const buffer = new AudioBuffer({ length: samples.length, sampleRate: SAMPLE_RATE });

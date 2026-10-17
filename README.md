@@ -43,6 +43,12 @@
   projects: tracks, notes, pitch points and shapes, vibrato, velocity / volume / gender / breath, the
   `pitd` pitch curve ⇄ the track pitch curve; written as USTX 0.6 so every OpenUtau can open it), MIDI (import with
   track picker & lyrics, export), project files (`.webtau.json`), WAV export.
+- **Lyrics & plugins** — type `ra` for a kana voicebank (or `ら` for a romaji one), or `+` to continue the previous
+  note, `R` for a rest, `ka[kya]` to force an alias; VCV banks get the right `a ら` alias from the previous
+  note and `prefix.map` is honoured. Lyrics the voicebank cannot sing are marked right away, the suggestion list
+  shows readings in both scripts, and importing a project opens _Fix lyrics_ with the nearest alias for each
+  unknown syllable (one undo step). Edit ▸ Lyric tools converts between hiragana, katakana and romaji. All of it
+  is built from small plugins you can switch off in Settings, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Tracks** — several tracks with mute / solo / volume / colour (all share the loaded voicebank), VSQX import,
   tempo map with markers you can drag on the ruler, time signatures, batch lyric filling (kana → morae).
 - **Resampler flags** — `B` breathiness, `t` pitch offset, `g` gender (formant shift), `A` amplitude
@@ -94,6 +100,8 @@ state modules as `window.webtau` for debugging.
 ```
 crates/w-synth        Rust engine: oto/prefix parsing, WORLD analysis (chunked), note renderer,
                       stepwise synthesis sessions with a per-note render cache  → WebAssembly
+src/lib/plugins       Extension API, lyric resolver, built-in plugins (see docs/ARCHITECTURE.md)
+src/lib/render        Renderer backends (interface, registry, mixing, the WORLD backend)
 src/lib/core          Pure editor logic: notes, tempo map, pitch curves, history, lyrics, ops
 src/lib/io            UST, MIDI, project file, WAV, text decoding
 src/lib/voicebank     Voicebank loading from zip / folders / drops (lazy sample access)

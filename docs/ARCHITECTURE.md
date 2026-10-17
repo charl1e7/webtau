@@ -1,0 +1,126 @@
+# WebTAU architecture
+
+WebTAU is a browser-based UTAU-style vocal editor: SvelteKit 3 / Svelte 5 on the front, a Rust → WebAssembly
+WORLD engine behind workers for synthesis. This page explains how the code is layered, where it can be
+extended without touching the core, and what a new kind of voice (for example a neural one) would have to add.
+
+## Layers
+
+```
+src/lib/
+  core/        Pure logic. No DOM, no Svelte, no I/O. Notes, tempo map, pitch curves, history,
+               lyric grammar (lyric-syntax), kana/romaji (kana), ops. Unit-tested in isolation.
+  voicebank/   What a voicebank is: types, loaders (registry), AliasIndex (what it can sing).
+  plugins/     Extension API, registry, the lyric resolver, built-in plugins.
+  render/      Renderer backends: interface, registry, mixing pipeline, the WORLD backend.
+  engine/      The WORLD engine itself: wasm bridge, workers, analysis scheduler, feature cache.
+               Only render/world.ts knows about it.
+  io/          File formats (UST, USTX, MIDI, VSQX, project) and the format registry.
+  state/       Reactive application state (Svelte 5 runes) and commands. The only layer that
+               wires the others together.
+  components/  UI. Reads state, calls commands; never talks to engine/io directly.
+```
+
+Dependencies point downwards: `core` imports nothing from the app; `plugins`, `render`, `voicebank` and `io`
+import `core` only; `state` imports everything; components import `state`. Anything that needs several of
+them lives in `state/`, which keeps the lower layers testable without a browser (most of them run in vitest).
+
+## Extension points
+
+Every one of these is "implement an interface, register it": no core file is edited.
+
+| To add…                         | Implement                              | Register with                                  |
+| ------------------------------- | -------------------------------------- | ---------------------------------------------- |
+| A file format                   | `FormatEntry` (`io/format-registry`)   | `formats.register(...)` in `state/commands.ts` |
+| A voicebank kind                | `VoicebankLoader` (`voicebank/loader`) | `registerVoicebankLoader(...)`                 |
+| A synthesis backend             | `RendererBackend` (`render/types`)     | `renderers.register(...)` in `state/renderers` |
+| Lyric / phoneme behaviour       | `Plugin` (`plugins/api`)               | `BUILTIN_PLUGINS` or `plugins.register(...)`   |
+| A command in Edit ▸ Lyric tools | `PluginCommand` inside a `Plugin`      | (part of the plugin)                           |
+
+### Formats
+
+A `FormatEntry` has extensions, an optional import menu item, an optional export menu item and an `openFile`
+handler. The File menu and drag-and-drop are generated from the registry (`state/menus.ts`,
+`file.openDropped`). USTX, for instance, is one `register` call next to `parseUstx` / `serializeUstx`.
+
+### Voicebanks and renderers
+
+- `Voicebank.kind` says what kind of bank it is (`'utau'` today). A `VoicebankLoader` recognizes a set of file
+  paths (`detect`) and builds the bank (`build`). The first loader that recognizes the files wins.
+- A `RendererBackend` has an `id`, `supports(voicebank)`, `load(voicebank)` and
+  `render(notes, tempo, hooks) → { promise, cancel }`. Notes arrive in absolute milliseconds with a flat pitch
+  contour in cents (`RenderNote`); nothing in the editor's own note model leaks into a backend.
+- Each track names its backend (`Track.renderer`, default `world`; unknown ids fall back to the default so
+  a project from a newer version still opens). `RendererRegistry.plan` splits the notes per backend and
+  `renderMixed` renders the groups in parallel, maps every backend's report back to note ids, aggregates
+  progress and mixes the audio. With one backend the buffer is returned untouched, so nothing changed for
+  today's single-backend case.
+- The WORLD backend (`render/world.ts`) wraps `EngineSession` (workers + wasm + IndexedDB feature cache). It
+  takes the session through a provider function, so `render/` has no dependency on application state.
+
+**What a neural backend (DiffSinger) would still need**, none of which requires changing the editor:
+
+1. A `VoicebankLoader` for its folder layout (`dsconfig.yaml`, ONNX files, phoneme list, dictionary).
+2. A `RendererBackend` that renders _phrases_ (it already receives the whole group of notes of a track and
+   may cache however it likes) using `onnxruntime-web` in a worker.
+3. A phonemizer as a `Plugin`. The `Plugin.candidates` hook already exists for "lyric → what the voice sings";
+   a neural voice's version would return phoneme sequences instead of oto aliases (the hook's `alias` is a string).
+4. Parameter curves per track (energy, breathiness, tension). The drawn track pitch curve
+   (`Track.pitchCurve`) is already the shape of that; it would be generalized to named curves.
+
+### Lyrics: the plugin pipeline
+
+A note's lyric is what the user typed; what the voice sings is _resolved_ from it, non-destructively:
+
+```
+typed lyric ──► grammar (core/lyric-syntax) ──► rest | continuation (+) | text [hint]
+                                                      │
+              exact alias in the voicebank?  ─── yes ─┤ (plain banks; VCV banks let plugins choose first)
+                                                      ▼
+              every active plugin proposes Candidate{alias, score, why, auto}
+                                                      ▼
+              best candidate that really exists (AliasIndex.has, prefix.map aware) ──► sung alias
+              nothing exists → "missing", with near matches kept as suggestions
+```
+
+- `AliasIndex` (`voicebank/alias-index.ts`) is the only thing plugins see of a voicebank: aliases split into
+  `lead` (VCV vowel), `core` (the syllable) and `base` (without the pitch affix of `prefix.map`), a lookup by
+  canonical syllable key, and `find(alias, pitch)` which applies `prefix.map` exactly like the engine does.
+- `syllableKey` (`core/kana.ts`) gives one key to every spelling of a sound: ら, ラ, ra and RA are the same key;
+  し, shi, si as well. That is what lets "ra" find ら (and the other way round) without a table per voicebank.
+- `NoteResolver` resolves a whole project in one pass so each note knows the sound of the one before it
+  (VCV banks need the previous vowel), and memoizes per distinct (lyric, pitch affix, previous sound).
+- Plugins are plain objects with optional hooks: `candidates` (lyric → spellings), `suggest` (lyric box),
+  `commands` (Edit ▸ Lyric tools). They get data in and return data out; a plugin that throws is skipped. They can be
+  switched off in Settings (stored as `disabledPlugins`); the resolver still keeps an exact match working, so
+  switching everything off never breaks a plain bank.
+- Built-ins: `core.search` (suggestions by spelling, then by sound, with the reading of each alias),
+  `ja.script-bridge` (kana ⇄ romaji, CV and VCV selection), `core.near-match` (one-letter-off aliases, only ever
+  _offered_, never applied silently), `core.lyric-tools` (fix lyrics, rewrite as aliases, convert between
+  hiragana, katakana and romaji).
+
+User-facing results: lyrics the bank can sing under another spelling just work (and say "Sung as ‘ka’"); lyrics it
+cannot sing are marked red immediately, not after a render; after an import with a voicebank loaded the _Fix
+lyrics_ dialog proposes the nearest alias per distinct lyric, applied as one undoable step.
+
+## How this compares with OpenUtau
+
+OpenUtau's phonemizers turn lyrics into phonemes inside the renderer pipeline, language by language, with
+`[hint]`, `+` and `prefix.map` handling spread over them. WebTAU keeps those ideas but separates concerns:
+
+- the **grammar** (rest, continuation, hint) is one small module shared by every language;
+- **spelling bridges** work on a voicebank-derived index instead of per-language tables, so they work for any
+  bank without configuration, and resolution never rewrites what the user typed unless asked (_Rewrite lyrics_);
+- **suggestions, resolution, import repair and batch edits** are separate hooks of one plugin, so a language
+  pack is a single object rather than a phonemizer plus UI patches;
+- validation is **live** (derived state), the doctor is **optional** and **undoable**.
+
+## Testing
+
+- `vitest` (`npm test`): core, plugins, render pipeline, formats, voicebank index. They need no browser.
+- `playwright` (`npm run test:e2e`): the real app on a desktop and an emulated phone viewport, including touch
+  gestures, with a synthetic voicebank generated in `tests/e2e/global-setup.ts`.
+- `cargo test`: the engine.
+
+When adding an extension point, add its registry-level unit test (see `render/render.test.ts`,
+`plugins/plugins.test.ts`) and one e2e that goes through the UI.

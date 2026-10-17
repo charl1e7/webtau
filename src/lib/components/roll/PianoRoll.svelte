@@ -8,6 +8,7 @@
 	import { gridTicks } from '#lib/core/music';
 	import { PPQ } from '#lib/core/types';
 	import { isAudible } from '#lib/core/engine-notes';
+	import { lyrics } from '#lib/state/lyrics.svelte';
 	import { RollController, RULER_H, rollHandle } from './controller.svelte';
 	import { drawFrame, readTheme, type Frame, type Theme } from './draw';
 	import LyricEditor from './LyricEditor.svelte';
@@ -105,7 +106,7 @@
 			beatTicks: (PPQ * 4) / project.timeSignature.denominator,
 			gridTicks: gridTicks(settings.data.gridDivision),
 			showNames: settings.data.showNoteNames,
-			unknown: playback.unknownLyrics,
+			unknown: new Set([...playback.unknownLyrics, ...lyrics.missing]),
 			hoverId: c.hoverId,
 			trackStyles: new Map(
 				project.tracks.map((t) => [t.id, { color: t.color, muted: !isAudible(t, project.tracks) }])
