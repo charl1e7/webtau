@@ -105,6 +105,7 @@ export function createTrack(index: number, init: Partial<Track> = {}): Track {
 		mute: false,
 		solo: false,
 		volume: 100,
+		pitchCurve: [],
 		...init
 	};
 }

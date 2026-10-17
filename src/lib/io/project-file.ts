@@ -31,12 +31,29 @@ function normalizeNote(raw: Partial<Note>): Note {
 	};
 }
 
+function normalizeCurve(raw: unknown): Track['pitchCurve'] {
+	if (!Array.isArray(raw)) return [];
+	return raw
+		.map((stroke) =>
+			Array.isArray(stroke)
+				? stroke
+						.filter((p) => Number.isFinite(p?.tick) && Number.isFinite(p?.pitch))
+						.map((p) => ({ tick: p.tick as number, pitch: p.pitch as number }))
+				: []
+		)
+		.filter((stroke) => stroke.length >= 2);
+}
+
 export function parseProject(text: string): ProjectData {
 	const raw = JSON.parse(text);
 	if (raw?.format !== FORMAT) throw new Error('This is not a WebTAU project file.');
 	const tracks: Track[] = raw.tracks?.length
 		? raw.tracks.map((t: Partial<Track>, i: number) =>
-				createTrack(i, { ...t, id: t.id ?? createTrack(i).id })
+				createTrack(i, {
+					...t,
+					id: t.id ?? createTrack(i).id,
+					pitchCurve: normalizeCurve(t.pitchCurve)
+				})
 			)
 		: [createTrack(0)];
 	return {

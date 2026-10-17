@@ -1,4 +1,11 @@
-import { MAX_PITCH, MIN_PITCH, type Note, type TempoChange } from '#lib/core/types';
+import {
+	MAX_PITCH,
+	MIN_PITCH,
+	type CurvePoint,
+	type Note,
+	type PitchStroke,
+	type TempoChange
+} from '#lib/core/types';
 import { compilePitch } from '#lib/core/pitch';
 import { isBlackKey, noteName, shade } from '#lib/core/music';
 import type { TempoMap } from '#lib/core/tempo';
@@ -94,6 +101,17 @@ export interface Frame {
 	tool: Tool;
 	touch: boolean;
 	selectedPoint: { noteId: string; pointId: string } | null;
+	/** Pitch curves drawn across whole tracks, in the colour of their track. */
+	trackCurves: readonly {
+		color: string;
+		muted: boolean;
+		active: boolean;
+		strokes: readonly PitchStroke[];
+	}[];
+	/** The stroke that is being drawn right now. */
+	liveStroke: { color: string; pts: readonly CurvePoint[] } | null;
+	/** Whether pitch points on single notes are the thing being edited. */
+	notePitchMode: boolean;
 	rubber: Rect | null;
 	guideTick: number | null;
 	pressedKey: number | null;
@@ -370,7 +388,7 @@ function drawPitch(ctx: CanvasRenderingContext2D, f: Frame) {
 			ctx.lineWidth = 1;
 		}
 
-		if (pitchTool && selected) {
+		if (pitchTool && selected && f.notePitchMode) {
 			// baseline
 			ctx.strokeStyle = t.pitch;
 			ctx.globalAlpha = 0.35;
@@ -398,7 +416,47 @@ function drawPitch(ctx: CanvasRenderingContext2D, f: Frame) {
 			}
 		}
 	}
+	drawTrackCurves(ctx, f);
 	ctx.restore();
+}
+
+/** Strokes of the track pitch mode: a dark casing keeps them readable on top of same-coloured notes. */
+function drawTrackCurves(ctx: CanvasRenderingContext2D, f: Frame) {
+	const [t0, t1] = visibleTicks(f);
+	const trace = (pts: readonly CurvePoint[]) => {
+		ctx.beginPath();
+		pts.forEach((p, i) => {
+			const x = xAt(f, p.tick);
+			const y = rowTop(f, p.pitch) + f.keyH / 2;
+			if (i) ctx.lineTo(x, y);
+			else ctx.moveTo(x, y);
+		});
+	};
+	const line = (pts: readonly CurvePoint[], color: string, width: number, alpha: number) => {
+		ctx.lineJoin = 'round';
+		ctx.lineCap = 'round';
+		ctx.globalAlpha = alpha * 0.6;
+		ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+		ctx.lineWidth = width + 3;
+		trace(pts);
+		ctx.stroke();
+		ctx.globalAlpha = alpha;
+		ctx.strokeStyle = tint(color, 0.3);
+		ctx.lineWidth = width;
+		trace(pts);
+		ctx.stroke();
+	};
+	for (const track of f.trackCurves) {
+		const alpha = track.muted ? 0.3 : track.active || !f.notePitchMode ? 1 : 0.6;
+		const width = track.active ? 3 : 2.5;
+		for (const stroke of track.strokes) {
+			if (stroke[stroke.length - 1].tick < t0 || stroke[0].tick > t1) continue;
+			line(stroke, track.color, width, track.active ? alpha : alpha * 0.85);
+		}
+	}
+	if (f.liveStroke) line(f.liveStroke.pts, f.liveStroke.color, 3, 1);
+	ctx.globalAlpha = 1;
+	ctx.lineWidth = 1;
 }
 
 function drawGuide(ctx: CanvasRenderingContext2D, f: Frame) {

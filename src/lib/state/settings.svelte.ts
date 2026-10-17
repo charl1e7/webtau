@@ -2,6 +2,8 @@ import { browser } from '$app/env';
 
 export type PlaybackStart = 'cursor' | 'start';
 export type AnalysisQuality = 'accurate' | 'fast';
+/** 'track': one pitch curve drawn across a whole track; 'note': pitch points on single notes. */
+export type PitchMode = 'track' | 'note';
 
 export interface SettingsData {
 	defaultLyric: string;
@@ -14,6 +16,7 @@ export interface SettingsData {
 	analysisQuality: AnalysisQuality;
 	backgroundAnalysis: boolean;
 	showNoteNames: boolean;
+	pitchMode: PitchMode;
 	/** UI scale for touch targets: 'auto' picks by input device. */
 	touchMode: 'auto' | 'on' | 'off';
 	theme: 'auto' | 'dark' | 'light';
@@ -36,6 +39,7 @@ const DEFAULTS: SettingsData = {
 	analysisQuality: 'fast',
 	backgroundAnalysis: false,
 	showNoteNames: true,
+	pitchMode: 'track',
 	touchMode: 'auto',
 	theme: 'dark',
 	leftWidth: 308,

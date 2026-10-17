@@ -105,7 +105,11 @@ test.describe('piano roll with a mouse', () => {
 		expect(await app.eval((w) => w.project.selection.size)).toBe(3);
 	});
 
-	test('pitch tool adds a point on click and removes it on double-click', async ({ app, page }) => {
+	test('note pitch mode adds a point on click and removes it on double-click', async ({
+		app,
+		page
+	}) => {
+		await app.eval((w) => (w.settings.data.pitchMode = 'note'));
 		await app.setNotes([{ tick: 0, length: 960, pitch: 60 }]);
 		const n = await app.point(100, 60);
 		await page.mouse.click(n.x, n.y);
