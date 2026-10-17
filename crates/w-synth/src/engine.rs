@@ -1,6 +1,7 @@
 use crate::consts;
 use crate::oto::{OtoBank, PrefixMap, parse_oto_ini, parse_prefix_map};
-use crate::resample::{self, RenderedNote};
+use crate::resample::{self, RenderedNote, consonant_scale};
+use crate::timing::{self, NoteTiming, TimingInput};
 use crate::world::features::WorldFeatures;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -72,13 +73,27 @@ pub struct RenderReport {
     /// Indices of notes whose sample has no analyzed features yet.
     pub missing_features: Vec<usize>,
     pub errors: Vec<String>,
+    /// Where the sound of every rendered note lies on the time axis.
+    pub spans: Vec<NoteSpan>,
+}
+
+/// The audible stretch of one note, absolute in milliseconds. The note fades in
+/// over `fade_in` from `start` and fades out over `fade_out` up to `end`.
+#[derive(Serialize, Clone, Debug)]
+pub struct NoteSpan {
+    pub index: usize,
+    pub start: f64,
+    pub end: f64,
+    pub fade_in: f64,
+    pub fade_out: f64,
 }
 
 struct PlannedNote {
     /// Index in the original notes array.
     source_index: usize,
     oto_alias: String,
-    has_next_crossfade: bool,
+    /// How the note sits against its neighbours (preutterance, overlap, fades).
+    timing: NoteTiming,
 }
 
 struct Session {
@@ -206,7 +221,7 @@ impl Engine {
         };
 
         let mut plan = Vec::with_capacity(order.len());
-        for (pos, &idx) in order.iter().enumerate() {
+        for &idx in order.iter() {
             let note = &project.notes[idx];
             if is_rest(note) {
                 report.skipped_rests += 1;
@@ -217,19 +232,13 @@ impl Engine {
                 report.missing_alias.push(idx);
                 continue;
             }
-            // A note is cross-faded into its successor only if they touch.
-            let has_next_crossfade = order[pos + 1..]
-                .iter()
-                .find(|&&n| project.notes[n].track == note.track)
-                .is_some_and(|&n| {
-                    (note.start_time + note.duration - project.notes[n].start_time).abs() < 0.5
-                });
             plan.push(PlannedNote {
                 source_index: idx,
                 oto_alias,
-                has_next_crossfade,
+                timing: NoteTiming::default(),
             });
         }
+        self.apply_timing(&project, &mut plan);
 
         let end_ms = project
             .notes
@@ -249,6 +258,37 @@ impl Engine {
             report,
         });
         count
+    }
+
+    /// Works out how each planned note sits against its neighbours in the same
+    /// track (see `timing`). Rests are not notes here, so a rest is a gap.
+    fn apply_timing(&self, project: &ProjectInfo, plan: &mut [PlannedNote]) {
+        let mut by_track: HashMap<u32, Vec<usize>> = HashMap::new();
+        for (i, p) in plan.iter().enumerate() {
+            by_track.entry(project.notes[p.source_index].track).or_default().push(i);
+        }
+        for indices in by_track.values() {
+            let inputs: Vec<TimingInput> = indices
+                .iter()
+                .map(|&i| {
+                    let note = &project.notes[plan[i].source_index];
+                    let stretch = consonant_scale(note.velocity);
+                    let (preutter, overlap) = self
+                        .oto
+                        .find(&plan[i].oto_alias)
+                        .map_or((0.0, 0.0), |o| (o.preutterance.max(0.0), o.overlap));
+                    TimingInput {
+                        start: note.start_time,
+                        duration: note.duration.max(1.0),
+                        preutter: preutter * stretch,
+                        overlap: overlap * stretch,
+                    }
+                })
+                .collect();
+            for (&i, t) in indices.iter().zip(timing::compute(&inputs)) {
+                plan[i].timing = t;
+            }
+        }
     }
 
     /// Renders up to `max_notes` more notes. Returns how many remain.
@@ -271,12 +311,12 @@ impl Engine {
                 continue;
             };
 
-            let key = cache_key(note, &planned.oto_alias, planned.has_next_crossfade, stored.epoch);
+            let key = cache_key(note, &planned.oto_alias, &planned.timing, stored.epoch);
             let rendered = if let Some(hit) = self.render_cache.get(&key) {
                 session.report.cached += 1;
                 hit.clone()
             } else {
-                match resample::render_note(note, oto, &stored.features, planned.has_next_crossfade)
+                match resample::render_note(note, oto, &stored.features, &planned.timing)
                 {
                     Ok(r) => {
                         session.report.rendered += 1;
@@ -293,6 +333,14 @@ impl Engine {
             };
 
             let start_ms = note.start_time - rendered.lead_ms;
+            let samples_ms = rendered.pcm.len() as f64 / consts::SAMPLE_RATE as f64 * 1000.0;
+            session.report.spans.push(NoteSpan {
+                index: planned.source_index,
+                start: start_ms,
+                end: start_ms + samples_ms,
+                fade_in: planned.timing.fade_in,
+                fade_out: planned.timing.fade_out,
+            });
             let start_sample = (start_ms / 1000.0 * consts::SAMPLE_RATE as f64).round() as i64;
             for (j, s) in rendered.pcm.iter().enumerate() {
                 let idx = start_sample + j as i64;
@@ -339,7 +387,7 @@ fn is_rest(note: &NoteInfo) -> bool {
     alias.is_empty() || alias.eq_ignore_ascii_case("r")
 }
 
-fn cache_key(note: &NoteInfo, oto_alias: &str, has_next: bool, epoch: u32) -> u64 {
+fn cache_key(note: &NoteInfo, oto_alias: &str, timing: &NoteTiming, epoch: u32) -> u64 {
     let mut h = DefaultHasher::new();
     oto_alias.hash(&mut h);
     epoch.hash(&mut h);
@@ -348,7 +396,15 @@ fn cache_key(note: &NoteInfo, oto_alias: &str, has_next: bool, epoch: u32) -> u6
     note.flags.hash(&mut h);
     note.velocity.to_bits().hash(&mut h);
     note.volume.to_bits().hash(&mut h);
-    has_next.hash(&mut h);
+    for v in [
+        timing.preutter,
+        timing.overlap,
+        timing.fade_in,
+        timing.tail_adjust,
+        timing.fade_out,
+    ] {
+        v.to_bits().hash(&mut h);
+    }
     for p in &note.pitchbend {
         p.offset.to_bits().hash(&mut h);
         p.value.to_bits().hash(&mut h);
@@ -484,6 +540,44 @@ mod tests {
         engine.finish().unwrap();
         let r = engine.report().clone();
         assert_eq!((r.rendered, r.cached), (1, 1));
+    }
+
+    /// Short notes of a VCV-style voicebank (long preutterance): the sounds of neighbours
+    /// must not stack on top of each other.
+    #[test]
+    fn short_adjacent_notes_give_way_to_each_other() {
+        let mut engine = Engine::new();
+        // offset, consonant, cutoff, preutterance, overlap
+        engine.load_oto(b"a.wav=a,0,150,-100,200,60\n").unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        let features = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        engine.cache_features("a.wav", features);
+
+        let notes: Vec<NoteInfo> = (0..4)
+            .map(|i| note("a", i as f64 * 170.0, 170.0, if i % 2 == 0 { 57 } else { 64 }))
+            .collect();
+        let starts: Vec<f64> = notes.iter().map(|n| n.start_time).collect();
+        engine.begin(ProjectInfo { tempo: 120.0, notes });
+        let timings: Vec<NoteTiming> =
+            engine.session.as_ref().unwrap().plan.iter().map(|p| p.timing).collect();
+
+        for i in 1..timings.len() {
+            let (prev, cur) = (&timings[i - 1], &timings[i]);
+            // The consonant never takes more than half of the previous note.
+            assert!(cur.preutter - cur.overlap <= 170.0 * 0.5 + 1e-9, "{cur:?}");
+            // The previous sound is gone by the time the next one has fully faded in.
+            let prev_sound_end = starts[i - 1] + prev.end_ms(170.0);
+            let next_fade_in_end = starts[i] - cur.preutter + cur.fade_in;
+            assert!(
+                prev_sound_end <= next_fade_in_end + 1e-9,
+                "note {i}: previous sound ends at {prev_sound_end}, the next is fully in at {next_fade_in_end}"
+            );
+        }
+        // And it still renders everything.
+        while engine.step(8).unwrap() > 0 {}
+        let pcm = engine.finish().unwrap();
+        assert!(pcm.iter().any(|s| s.abs() > 0.1));
+        assert_eq!(engine.report().rendered, 4);
     }
 
     #[test]

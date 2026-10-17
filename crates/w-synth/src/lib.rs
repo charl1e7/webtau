@@ -7,6 +7,7 @@ mod flags;
 mod interpolator;
 mod oto;
 mod resample;
+mod timing;
 mod util;
 mod world;
 

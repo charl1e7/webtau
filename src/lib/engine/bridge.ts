@@ -25,6 +25,8 @@ export interface RenderReport {
 	missing_alias: number[];
 	missing_features: number[];
 	errors: string[];
+	/** Where the sound of each rendered note lies on the time axis (absolute ms). */
+	spans?: { index: number; start: number; end: number; fade_in: number; fade_out: number }[];
 }
 
 const encoder = new TextEncoder();

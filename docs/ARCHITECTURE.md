@@ -103,6 +103,17 @@ User-facing results: lyrics the bank can sing under another spelling just work (
 cannot sing are marked red immediately, not after a render; after an import with a voicebank loaded the _Fix
 lyrics_ dialog proposes the nearest alias per distinct lyric, applied as one undoable step.
 
+## How neighbouring notes are laid out (engine)
+
+`crates/w-synth/src/timing.rs` decides, per track and from the oto values (scaled by velocity), where each sound
+starts and ends. A UTAU sample is placed so that its preutterance point meets the note start, so the sound of a note
+begins `preutter` ms early; the previous note therefore ends `preutter − overlap` ms early and the two cross-fade over
+`overlap`. When the previous note is too short for the full preutterance (short notes with a VCV bank) the
+preutterance and overlap are squeezed so that the consonant takes at most half of it, and a small gap limits the
+preutterance to the gap. The result is passed to `render_note` as a `NoteTiming` (effective lead, fades, tail) and
+reported back as `spans`, which the e2e tests use to assert that two notes are never at full level together.
+Pitch points are in note time (they may be negative) and are mapped onto the render with the lead taken into account.
+
 ## How this compares with OpenUtau
 
 OpenUtau's phonemizers turn lyrics into phonemes inside the renderer pipeline, language by language, with
