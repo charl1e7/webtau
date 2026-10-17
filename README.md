@@ -39,7 +39,9 @@
   dragged. Also: shaped pitch points, auto-portamento, vibrato with fade-in/out, per-note flags,
   velocity, volume, modulation. The eraser removes notes and pitch by default; hold it (or right-click) to
   erase only notes or only pitch.
-- **Import / export** — UST (import & export, pitch curves, vibrato, tempo changes), MIDI (import with
+- **Import / export** — UST (import & export, pitch curves, vibrato, tempo changes), **USTX** (OpenUtau
+  projects: tracks, notes, pitch points and shapes, vibrato, velocity / volume / gender / breath, the
+  `pitd` pitch curve ⇄ the track pitch curve; written as USTX 0.6 so every OpenUtau can open it), MIDI (import with
   track picker & lyrics, export), project files (`.webtau.json`), WAV export.
 - **Tracks** — several tracks with mute / solo / volume / colour (all share the loaded voicebank), VSQX import,
   tempo map with markers you can drag on the ruler, time signatures, batch lyric filling (kana → morae).

@@ -177,7 +177,8 @@
 		const entry = item.webkitGetAsEntry();
 		const dropped = e.dataTransfer?.files[0];
 		const name = (dropped?.name ?? entry?.name ?? '').toLowerCase();
-		if (/\.(ust|vsqx|mid|midi|json|webtau)$/.test(name) && dropped) void file.openDropped(dropped);
+		if (/\.(ust|ustx|vsqx|mid|midi|json|webtau)$/.test(name) && dropped)
+			void file.openDropped(dropped);
 		else if (entry) void voicebank.load(entry);
 	}
 
@@ -249,7 +250,7 @@
 
 	{#if dragging}
 		<div class="drop" aria-hidden="true">
-			<div>Drop a voicebank (.zip / folder), a .ust, .mid or project file</div>
+			<div>Drop a voicebank (.zip / folder), a .ust, .ustx, .mid or project file</div>
 		</div>
 	{/if}
 </div>

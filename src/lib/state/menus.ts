@@ -19,11 +19,13 @@ export function fileMenu(): MenuItem[] {
 		{ label: 'Save project', icon: 'save', hint: 'Ctrl+S', action: file.save },
 		sep,
 		{ label: 'Import UST…', icon: 'upload', action: file.importUst },
+		{ label: 'Import USTX (OpenUtau)…', icon: 'upload', action: file.importUstx },
 		{ label: 'Import MIDI…', icon: 'upload', action: file.importMidi },
 		{ label: 'Import VSQX (VOCALOID)…', icon: 'upload', action: file.importVsqx },
 		sep,
 		{ label: 'Export WAV', icon: 'download', hint: 'Ctrl+E', action: file.exportWav },
 		{ label: 'Export UST', icon: 'download', action: file.exportUst },
+		{ label: 'Export USTX (OpenUtau)', icon: 'download', action: file.exportUstx },
 		{ label: 'Export MIDI', icon: 'download', action: file.exportMidi }
 	];
 }

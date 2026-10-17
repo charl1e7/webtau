@@ -19,6 +19,7 @@ import { downloadBlob, safeFilename } from '#lib/io/download';
 import { parseMidi, serializeMidi, type MidiFile } from '#lib/io/midi';
 import { parseProject, serializeProject } from '#lib/io/project-file';
 import { parseUst, serializeUst } from '#lib/io/ust';
+import { parseUstx, serializeUstx } from '#lib/io/ustx';
 import { parseVsqx } from '#lib/io/vsqx';
 import { createTrack } from '#lib/core/music';
 import { decodeText } from '#lib/io/text';
@@ -117,6 +118,46 @@ export const file = {
 			'success'
 		);
 		ust.warnings.forEach((w) => ui.toast(w));
+	}),
+
+	importUstx: guard(async () => {
+		const [f] = await pickFiles('.ustx');
+		if (!f || !confirmDiscard()) return;
+		file.applyUstx(await readBytes(f), f.name);
+	}),
+
+	applyUstx: (bytes: Uint8Array, fileName: string) => {
+		const ustx = parseUstx(bytes);
+		if (!ustx.notes.length) throw new Error('The USTX file contains no notes.');
+		playback.stop();
+		project.load({
+			name: ustx.name || fileName.replace(/\.ustx$/i, ''),
+			notes: ustx.notes,
+			tracks: ustx.tracks,
+			tempos: ustx.tempos,
+			timeSignature: ustx.timeSignature,
+			voicebank: ustx.voicebank
+		});
+		ui.toast(
+			`Imported ${ustx.notes.length} notes from USTX (${ustx.tracks.length} track(s)).`,
+			'success'
+		);
+		ustx.warnings.forEach((w) => ui.toast(w));
+	},
+
+	exportUstx: guard(() => {
+		if (!project.notes.length) throw new Error('Nothing to export: add some notes first.');
+		const { text, warnings } = serializeUstx({
+			name: project.name,
+			voicebank: project.voicebankName,
+			notes: project.notes,
+			tracks: project.tracks,
+			tempos: project.tempos,
+			timeSignature: project.timeSignature
+		});
+		downloadBlob(text, `${safeFilename(project.name)}.ustx`, 'text/yaml;charset=utf-8');
+		ui.toast('USTX exported for OpenUtau (all tracks).', 'success');
+		warnings.forEach((w) => ui.toast(w));
 	}),
 
 	exportUst: guard(() => {
@@ -228,6 +269,9 @@ export const file = {
 				voicebank: ust.voicebank
 			});
 			ui.toast(`Imported ${ust.notes.length} notes from UST.`, 'success');
+		} else if (name.endsWith('.ustx')) {
+			if (!confirmDiscard()) return;
+			file.applyUstx(await readBytes(f), f.name);
 		} else if (name.endsWith('.mid') || name.endsWith('.midi')) {
 			const midi = parseMidi(await readBytes(f));
 			const withNotes = midi.tracks.filter((t) => t.noteCount > 0);
