@@ -59,6 +59,36 @@ test.describe('audio engine in the browser', () => {
 		void page;
 	});
 
+	test('short adjacent notes give way to each other instead of sounding together', async ({
+		app
+	}) => {
+		// Ten notes of 90 ms, each starting where the previous one ends, alternating in pitch.
+		await app.setNotes(
+			Array.from({ length: 10 }, (_, i) => ({
+				tick: i * 90,
+				length: 90,
+				pitch: i % 2 ? 67 : 60,
+				lyric: ['ka', 'sa', 'mi', 'ta'][i % 4]
+			}))
+		);
+		await app.eval((w) => w.playback.render());
+		expect(await app.eval((w) => w.playback.status)).toBe('ready');
+		const spans = await app.eval((w) =>
+			w.project.notes.map((n) => w.playback.spans.find((s: { id: string }) => s.id === n.id))
+		);
+		expect(spans.every(Boolean)).toBe(true);
+		for (let i = 1; i < spans.length; i++) {
+			const [prev, next] = [spans[i - 1], spans[i]];
+			// No two notes are at full level together: the previous one is already fading
+			// when the next one reaches full level (an equal-power cross-fade).
+			expect(prev.end - prev.fadeOut, `note ${i}`).toBeLessThanOrEqual(
+				next.start + next.fadeIn + 0.5
+			);
+			// And the previous sound is gone before the note after it begins.
+			if (i >= 2) expect(spans[i - 2].end, `note ${i}`).toBeLessThanOrEqual(next.start + 0.5);
+		}
+	});
+
 	test('a track with an unknown renderer id still renders with the default backend', async ({
 		app
 	}) => {

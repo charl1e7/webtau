@@ -61,6 +61,17 @@ export interface MixedOutcome {
 	/** Ids of notes whose samples could not be analyzed. */
 	missingFeatures: string[];
 	errors: string[];
+	/** The audible stretch of every rendered note, by note id. */
+	spans: NoteSpanInfo[];
+}
+
+export interface NoteSpanInfo {
+	id: string;
+	/** Absolute ms. The note fades in over `fadeIn` from `start` and fades out over `fadeOut` up to `end`. */
+	start: number;
+	end: number;
+	fadeIn: number;
+	fadeOut: number;
 }
 
 export interface MixedJob {
@@ -117,7 +128,8 @@ export function renderMixed(
 			cached: 0,
 			missingAlias: [],
 			missingFeatures: [],
-			errors: []
+			errors: [],
+			spans: []
 		};
 		done.forEach((o, g) => {
 			out.rendered += o.report.rendered;
@@ -125,6 +137,15 @@ export function renderMixed(
 			out.missingAlias.push(...o.report.missing_alias.map((i) => groups[g].ids[i]));
 			out.missingFeatures.push(...o.report.missing_features.map((i) => groups[g].ids[i]));
 			out.errors.push(...o.report.errors);
+			for (const sp of o.report.spans ?? []) {
+				out.spans.push({
+					id: groups[g].ids[sp.index],
+					start: sp.start,
+					end: sp.end,
+					fadeIn: sp.fade_in,
+					fadeOut: sp.fade_out
+				});
+			}
 		});
 		return out;
 	});

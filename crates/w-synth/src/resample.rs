@@ -2,6 +2,7 @@ use crate::consts;
 use crate::flags::parser::Flags;
 use crate::interpolator::interp::{Akima, Interpolator};
 use crate::oto::OtoEntry;
+use crate::timing::NoteTiming;
 use crate::util;
 use crate::world::features::WorldFeatures;
 use crate::world::synthesis::{synthesize_aperiodic, synthesize_harmonic};
@@ -73,11 +74,16 @@ fn interpolate_rows(data: &[f32], frames: usize, dims: usize, points: &[f64]) ->
     out
 }
 
+/// UTAU velocity: 100 is neutral, higher means a shorter consonant.
+pub fn consonant_scale(velocity: f64) -> f64 {
+    (1.0 - velocity / 100.0).exp2().clamp(0.25, 4.0)
+}
+
 pub fn render_note(
     note: &NoteInfo,
     oto: &OtoEntry,
     features: &WorldFeatures,
-    has_next_note_for_crossfade: bool,
+    timing: &NoteTiming,
 ) -> Result<RenderedNote> {
     let flags: Flags = note.flags.replace('/', "").parse()?;
     let volume = note.volume / 100.0;
@@ -90,14 +96,12 @@ pub fn render_note(
     let feature_len_sec = frames as f64 / fps;
     let wav_total_dur_ms = feature_len_sec * 1000.0;
 
-    // UTAU velocity: 100 is neutral, higher means a shorter consonant.
-    let consonant_scale = (1.0 - note.velocity / 100.0).exp2().clamp(0.25, 4.0);
+    let consonant_scale = consonant_scale(note.velocity);
 
     let src_offset_ms = oto.offset.max(0.0);
     let src_consonant_ms = oto.consonant.max(0.0);
     let src_preutterance_ms = oto.preutterance.max(0.0);
     let src_cutoff_ms = oto.cutoff;
-    let src_overlap_ms = oto.overlap.max(0.0);
 
     let src_attack_end_ms = if src_consonant_ms > 0.0 {
         (src_offset_ms + src_consonant_ms).min(wav_total_dur_ms)
@@ -119,17 +123,21 @@ pub fn render_note(
     };
 
     let note_dur_ms = note.duration.max(1.0);
-    let render_preutterance_ms = src_preutterance_ms * consonant_scale;
+    // The sound starts `preutter` before the note. When the previous note is too short for the full
+    // preutterance it was shortened (see `timing`); then the beginning of the consonant is skipped
+    // so that the sample still meets the note start at its preutterance point.
+    let render_preutterance_ms = timing.preutter;
+    let full_preutterance_ms = src_preutterance_ms * consonant_scale;
+    let skip_src_ms = (full_preutterance_ms - render_preutterance_ms).max(0.0) / consonant_scale;
     let out_fixed_consonant_dur_ms =
         (src_fixed_consonant_dur_ms * consonant_scale).min(note_dur_ms);
 
-    let current_fade_out_ms = if has_next_note_for_crossfade {
-        src_overlap_ms.max(30.0)
-    } else {
-        20.0
-    };
+    // Where the sound of the note ends: the next note's preutterance eats into it.
+    let sound_end_ms = timing.end_ms(note_dur_ms);
+    let current_fade_out_ms = timing.fade_out.min(sound_end_ms);
+    let current_fade_in_ms = timing.fade_in.min(render_preutterance_ms + sound_end_ms);
 
-    let total_render_duration_ms = render_preutterance_ms + note_dur_ms + current_fade_out_ms;
+    let total_render_duration_ms = render_preutterance_ms + sound_end_ms;
     let render_length = (total_render_duration_ms / 1000.0 * fps).round() as usize;
     if render_length == 0 {
         return Err(anyhow!("Note duration is zero"));
@@ -140,7 +148,7 @@ pub fn render_note(
         .map(|i| {
             let out_ms = i as f64 * consts::FRAME_PERIOD;
             let src_ms = if out_ms < render_preutterance_ms {
-                src_offset_ms + out_ms / consonant_scale
+                src_offset_ms + skip_src_ms + out_ms / consonant_scale
             } else if out_ms < render_preutterance_ms + out_fixed_consonant_dur_ms {
                 src_preutterance_point_ms + (out_ms - render_preutterance_ms) / consonant_scale
             } else {
@@ -154,7 +162,8 @@ pub fn render_note(
     let mgc_render = interpolate_rows(&features.mgc, frames, features.mgc_dims(), &t_render);
     let bap_render = interpolate_rows(&features.bap, frames, features.bap_dims(), &t_render);
 
-    let (mut f0_render, pitch_dev) = build_f0(note, &flags, render_length, note_dur_ms);
+    let (mut f0_render, pitch_dev) =
+        build_f0(note, &flags, render_length, render_preutterance_ms);
     let mut frame_gain = vec![1.0f64; render_length];
     apply_amplitude_flag(&mut frame_gain, &pitch_dev, flags.tremolo);
     apply_fry(
@@ -191,7 +200,7 @@ pub fn render_note(
         .collect();
 
     apply_frame_gain(&mut syn, &frame_gain);
-    apply_crossfade_envelopes(&mut syn, render_preutterance_ms, current_fade_out_ms);
+    apply_crossfade_envelopes(&mut syn, current_fade_in_ms, current_fade_out_ms);
 
     Ok(RenderedNote {
         pcm: syn,
@@ -201,11 +210,17 @@ pub fn render_note(
 
 /// Frame-wise F0 contour (Hz) of a note including its pitch bend points.
 /// Returns the F0 contour (Hz) and the pitch-bend deviation (semitones) per frame.
+///
+/// Frame `i` of the render lies `lead_ms` before the note start, so it is at
+/// note time `i * frame - lead_ms`; bend points are in note time (and may be
+/// negative, e.g. a glide into the note). Before the first and after the last
+/// point there is no deviation, except that a first point before the note
+/// start is held until it.
 fn build_f0(
     note: &NoteInfo,
     flags: &Flags,
     render_length: usize,
-    note_dur_ms: f64,
+    lead_ms: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     let mut pitch_points: Vec<(f64, f64)> = note
         .pitchbend
@@ -220,10 +235,9 @@ fn build_f0(
         pitch_points.push((note.duration, 0.0));
     }
 
-    let num_frames_in_note = ((note_dur_ms / consts::FRAME_PERIOD).ceil() as usize).max(2);
-    let uniform: Vec<f64> = (0..num_frames_in_note)
+    let dev: Vec<f64> = (0..render_length)
         .map(|i| {
-            let time_ms = i as f64 * consts::FRAME_PERIOD;
+            let time_ms = i as f64 * consts::FRAME_PERIOD - lead_ms;
             let idx = pitch_points.partition_point(|(t, _)| *t < time_ms);
             if idx == 0 {
                 pitch_points[0].1
@@ -239,9 +253,7 @@ fn build_f0(
         })
         .collect();
 
-    let spline = Akima::new(&uniform);
     let base = note.pitch as f64 + flags.pitch_offset / 100.0;
-    let dev: Vec<f64> = (0..render_length).map(|i| spline.sample(i as f64)).collect();
     let hz = dev.iter().map(|d| util::midi_to_hz(d + base)).collect();
     (hz, dev)
 }
@@ -328,6 +340,53 @@ fn apply_frame_gain(pcm: &mut [f32], gain: &[f64]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::{NoteInfo, PitchbendPointInfo};
+
+    fn bent(points: &[(f64, f64)]) -> NoteInfo {
+        NoteInfo {
+            alias: "a".into(),
+            pitch: 60,
+            start_time: 0.0,
+            duration: 400.0,
+            pitchbend: points
+                .iter()
+                .map(|&(offset, value)| PitchbendPointInfo { offset, value })
+                .collect(),
+            flags: String::new(),
+            velocity: 100.0,
+            volume: 100.0,
+            modulation: 0.0,
+            track: 0,
+        }
+    }
+
+    #[test]
+    fn pitch_bend_follows_note_time_not_render_time() {
+        // The sound starts 100 ms before the note. A slide from 0 to +600 cents over the first
+        // 200 ms of the note must be at +300 cents 100 ms after the note start.
+        let lead = 100.0;
+        let note = bent(&[(0.0, 0.0), (200.0, 600.0)]);
+        let flags: Flags = "".parse().unwrap();
+        let (_, dev) = build_f0(&note, &flags, 200, lead);
+        let at = |note_ms: f64| dev[((note_ms + lead) / consts::FRAME_PERIOD).round() as usize];
+        assert!(at(-50.0).abs() < 1e-9, "the lead-in is not bent");
+        assert!(at(0.0).abs() < 1e-9);
+        assert!((at(100.0) - 3.0).abs() < 1e-6, "got {}", at(100.0));
+        assert!((at(200.0) - 6.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pitch_points_before_the_note_start_are_used() {
+        // A glide into the note: -400 cents 50 ms before the start, back to 0 at the start.
+        let lead = 100.0;
+        let note = bent(&[(-50.0, -400.0), (0.0, 0.0)]);
+        let flags: Flags = "".parse().unwrap();
+        let (_, dev) = build_f0(&note, &flags, 100, lead);
+        let at = |note_ms: f64| dev[((note_ms + lead) / consts::FRAME_PERIOD).round() as usize];
+        assert!((at(-50.0) + 4.0).abs() < 1e-6, "got {}", at(-50.0));
+        assert!((at(-25.0) + 2.0).abs() < 1e-6);
+        assert!(at(0.0).abs() < 1e-9);
+    }
 
     fn peak(frame: &[f64]) -> usize {
         frame

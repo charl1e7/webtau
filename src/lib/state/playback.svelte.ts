@@ -1,7 +1,7 @@
 import { toEngineNotes } from '#lib/core/engine-notes';
 import { encodeWav } from '#lib/io/wav';
 import { downloadBlob, safeFilename } from '#lib/io/download';
-import { renderMixed, type RenderGroup } from '#lib/render/registry';
+import { renderMixed, type NoteSpanInfo, type RenderGroup } from '#lib/render/registry';
 import { renderers } from './renderers';
 import { project } from './project.svelte';
 import { settings } from './settings.svelte';
@@ -23,6 +23,8 @@ class PlaybackState {
 	durationMs = $state(0);
 	/** Notes whose lyric was not found in the voicebank (after the last render). */
 	unknownLyrics = $state.raw<ReadonlySet<string>>(new Set());
+	/** Where each note's sound lies on the time axis after the last render (for diagnostics and tests). */
+	spans = $state.raw<NoteSpanInfo[]>([]);
 
 	/** Playhead in ticks (follows tempo changes). */
 	positionTick = $derived(project.tempoMap.msToTick(this.positionMs));
@@ -99,6 +101,7 @@ class PlaybackState {
 			this.durationMs = buffer.duration * 1000;
 
 			this.unknownLyrics = new Set(outcome.missingAlias);
+			this.spans = outcome.spans;
 			this.status = 'ready';
 			this.progress = 1;
 			this.message = `Rendered ${outcome.rendered}, reused ${outcome.cached}`;
