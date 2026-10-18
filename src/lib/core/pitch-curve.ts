@@ -88,7 +88,14 @@ export function simplify(
 }
 
 /** Cuts the part between `t0` and `t1` out of every stroke. */
-export function eraseRange(strokes: readonly PitchStroke[], t0: number, t1: number): PitchStroke[] {
+export function eraseRange(
+	strokes: readonly PitchStroke[],
+	from: number,
+	to: number
+): PitchStroke[] {
+	// Dragging an eraser leftwards gives the bounds the wrong way round.
+	const t0 = Math.min(from, to);
+	const t1 = Math.max(from, to);
 	const out: PitchStroke[] = [];
 	for (const s of strokes) {
 		const first = s[0].tick;

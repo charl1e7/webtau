@@ -170,7 +170,11 @@ OpenUtau's phonemizers turn lyrics into phonemes inside the renderer pipeline, l
 - `vitest` (`npm test`): core, plugins, render pipeline, formats, voicebank index. They need no browser.
 - `playwright` (`npm run test:e2e`): the real app on a desktop and an emulated phone viewport, including touch
   gestures, with a synthetic voicebank generated in `tests/e2e/global-setup.ts`.
-- `cargo test`: the engine.
+- `cargo test`: the engine (timing properties on random lines, flags fuzzing, oto parsing, pitch accuracy of rendered
+  notes, cache keys, progressive sessions).
+- Property tests (`src/lib/testing/rng.ts`, seeded: a failure names its seed) cover tempo maps, note operations, the
+  limiter, intervals, pitch curves, all file formats (random round trips, truncated and junk input), the plugin
+  resolver and the project store with its undo history.
 
 When adding an extension point, add its registry-level unit test (see `render/render.test.ts`,
 `plugins/plugins.test.ts`) and one e2e that goes through the UI.

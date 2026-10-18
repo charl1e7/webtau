@@ -39,7 +39,9 @@ export class App {
 	}
 
 	/** Replaces the project with the given notes. */
-	async setNotes(notes: { tick: number; length?: number; pitch: number; lyric?: string }[]) {
+	async setNotes(
+		notes: { tick: number; length?: number; pitch: number; lyric?: string; volume?: number }[]
+	) {
 		await this.eval((w, list) => {
 			w.project.load({ name: 'Test', notes: [] });
 			for (const n of list) w.project.addNote({ length: 480, lyric: 'a', ...n });

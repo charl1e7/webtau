@@ -102,6 +102,7 @@ export function parseUst(input: Uint8Array | string): UstImport {
 
 	const setting = sections.find((s) => s.name === 'SETTING')?.values ?? new Map<string, string>();
 	let bpm = num(setting.get('Tempo'), 120);
+	if (!(bpm > 0)) bpm = 120;
 	const tempos: TempoChange[] = [{ tick: 0, bpm }];
 
 	const notes: Note[] = [];

@@ -66,6 +66,10 @@ export function parseMidi(bytes: Uint8Array): MidiFile {
 		let name = '';
 		const open = new Map<string, { start: number; vel: number }>();
 		const notes: Note[] = [];
+		const close = (pitch: number, start: number, end: number) => {
+			const tick = toTick(start);
+			notes.push(createNote({ tick, length: Math.max(1, toTick(end) - tick), pitch, lyric: 'a' }));
+		};
 		const lyrics: { tick: number; text: string }[] = [];
 
 		while (r.pos < end) {
@@ -84,7 +88,9 @@ export function parseMidi(bytes: Uint8Array): MidiFile {
 				r.pos += size;
 				if (type === 0x51 && size === 3) {
 					const mpqn = (data[0] << 16) | (data[1] << 8) | data[2];
-					tempos.push({ tick: toTick(time), bpm: Math.round((60000000 / mpqn) * 100) / 100 });
+					// A tempo of zero length is meaningless (and would be an infinite tempo).
+					if (mpqn > 0)
+						tempos.push({ tick: toTick(time), bpm: Math.round((60000000 / mpqn) * 100) / 100 });
 				} else if (type === 0x03) name = decodeText(data);
 				else if (type === 0x05) lyrics.push({ tick: toTick(time), text: decodeText(data) });
 			} else if (status === 0xf0 || status === 0xf7) {
@@ -96,26 +102,24 @@ export function parseMidi(bytes: Uint8Array): MidiFile {
 				const d2 = kind === 0xc0 || kind === 0xd0 ? 0 : r.u8();
 				const key = `${channel}:${d1}`;
 				if (kind === 0x90 && d2 > 0) {
+					// Struck again before it was released: the first note ends where the second begins.
+					const sounding = open.get(key);
+					if (sounding) close(d1, sounding.start, time);
 					open.set(key, { start: time, vel: d2 });
 				} else if (kind === 0x80 || (kind === 0x90 && d2 === 0)) {
 					const on = open.get(key);
 					if (on) {
 						open.delete(key);
-						const tick = toTick(on.start);
-						notes.push(
-							createNote({
-								tick,
-								length: Math.max(1, toTick(time) - tick),
-								pitch: d1,
-								lyric: 'a'
-							})
-						);
+						close(d1, on.start, time);
 					}
 				}
 			}
 			if (r.pos > end) break;
 		}
 		r.pos = end;
+		// Notes that were never switched off end with their track.
+		for (const [key, on] of open)
+			close(Number(key.split(':')[1]), on.start, Math.max(time, on.start));
 
 		const sorted = sortNotes(notes);
 		for (const l of lyrics) {

@@ -14,7 +14,9 @@ async function longSong(app: App, count: number, shift = 0) {
 			tick: i * 288,
 			length: 288,
 			pitch: 57 + shift + ((i * 5) % 12),
-			lyric: LYRICS[i % LYRICS.length]
+			lyric: LYRICS[i % LYRICS.length],
+			// Every note a sound of its own: identical notes are rendered once, which would make the song too easy.
+			volume: 40 + (i % 111)
 		}))
 	);
 }
@@ -177,7 +179,9 @@ test.describe('progressive rendering', () => {
 		await app.eval((w) => void w.playback.preview(64));
 		await app.eval((w) => w.playback.pause());
 		await expect.poll(() => app.eval((w) => w.playback.status), { timeout: 60_000 }).toBe('ready');
-		expect(await app.eval((w) => w.playback.message)).toMatch(/Rendered 1[45]\d/);
+		const [, fresh, reused] =
+			/Rendered (\d+), reused (\d+)/.exec(await app.eval((w) => w.playback.message)) ?? [];
+		expect(Number(fresh) + Number(reused)).toBe(150);
 		expect(await app.eval((w) => w.playback.unknownLyrics.size)).toBe(0);
 	});
 

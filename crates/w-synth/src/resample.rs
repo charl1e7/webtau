@@ -433,6 +433,218 @@ mod tests {
         assert_eq!(gain[0], 1.0);
         assert!(gain[1] > 1.5 && gain[2] < 0.7);
     }
+
+    // ---- more tests ---------------------------------------------------------------------------
+
+    use crate::oto::OtoEntry;
+    use crate::testutil::{estimate_f0, features};
+    use crate::timing::NoteTiming;
+
+    fn oto(offset: f64, consonant: f64, cutoff: f64, pre: f64, overlap: f64) -> OtoEntry {
+        OtoEntry {
+            filename: "a.wav".into(),
+            alias: "a".into(),
+            offset,
+            consonant,
+            cutoff,
+            preutterance: pre,
+            overlap,
+        }
+    }
+
+    fn plain_timing(pre: f64) -> NoteTiming {
+        NoteTiming { preutter: pre, overlap: 0.0, fade_in: 5.0, tail_adjust: 0.0, fade_out: 35.0 }
+    }
+
+    #[test]
+    fn the_crossfade_envelopes_start_and_end_at_silence_and_stay_in_bounds() {
+        let mut pcm = vec![1.0f32; 4410];
+        apply_crossfade_envelopes(&mut pcm, 20.0, 30.0);
+        assert!(pcm[0].abs() < 1e-6);
+        assert!(pcm[pcm.len() - 1].abs() < 1e-6);
+        assert!(pcm.iter().all(|s| (0.0..=1.0001).contains(s)));
+        assert!((pcm[2000] - 1.0).abs() < 1e-6, "untouched in the middle");
+        // Rising during the fade-in, falling during the fade-out.
+        let n_in = (0.020 * 44100.0) as usize;
+        assert!(pcm[..n_in].windows(2).all(|w| w[1] >= w[0]));
+        let n_out = (0.030 * 44100.0) as usize;
+        let tail = &pcm[pcm.len() - n_out..];
+        assert!(tail.windows(2).all(|w| w[1] <= w[0]));
+    }
+
+    #[test]
+    fn fades_longer_than_the_sound_or_on_nothing_do_not_panic() {
+        let mut pcm = vec![1.0f32; 100];
+        apply_crossfade_envelopes(&mut pcm, 500.0, 500.0);
+        assert!(pcm.iter().all(|s| s.is_finite() && *s >= 0.0 && *s <= 1.0));
+        let mut empty: Vec<f32> = vec![];
+        apply_crossfade_envelopes(&mut empty, 10.0, 10.0);
+        let mut one = vec![1.0f32];
+        apply_crossfade_envelopes(&mut one, 10.0, 10.0);
+        assert!(one[0].is_finite());
+        let mut none = vec![0.5f32; 10];
+        apply_crossfade_envelopes(&mut none, 0.0, -5.0);
+        assert!(none.iter().all(|s| *s == 0.5));
+    }
+
+    #[test]
+    fn the_windowed_spline_equals_the_spline_of_the_whole_column() {
+        let frames = 80;
+        let dims = 3;
+        let mut seed = 5u64;
+        let data: Vec<f32> = (0..frames * dims)
+            .map(|_| {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((seed >> 40) as f32 / (1u64 << 24) as f32) * 10.0 - 5.0
+            })
+            .collect();
+        for (lo, hi) in [(10.0, 30.0), (0.0, 12.5), (60.2, 79.0), (30.0, 30.0)] {
+            let points: Vec<f64> = (0..20).map(|i| lo + (hi - lo) * i as f64 / 19.0).collect();
+            let windowed = interpolate_rows(&data, frames, dims, &points);
+            for d in 0..dims {
+                let column: Vec<f64> = (0..frames).map(|f| data[f * dims + d] as f64).collect();
+                let full = Akima::new(&column);
+                for (row, p) in windowed.iter().zip(&points) {
+                    let expected = full.sample(*p);
+                    // Away from the ends of the whole column the two must agree exactly.
+                    if *p > 3.0 && *p < frames as f64 - 4.0 {
+                        assert!((row[d] - expected).abs() < 1e-9, "window {lo}..{hi}, point {p}: {} vs {expected}", row[d]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn interpolating_at_nothing_or_a_single_frame_is_fine() {
+        let data = vec![1.0f32, 2.0, 3.0, 4.0];
+        let out = interpolate_rows(&data, 2, 2, &[0.5]);
+        assert_eq!(out.len(), 1);
+        assert!((out[0][0] - 2.0).abs() < 1e-9 && (out[0][1] - 3.0).abs() < 1e-9);
+        let single = interpolate_rows(&[7.0f32, 8.0], 1, 2, &[0.0, 3.0, -2.0]);
+        assert_eq!(single.len(), 3);
+        for row in single {
+            assert_eq!(row, vec![7.0, 8.0]);
+        }
+    }
+
+    #[test]
+    fn the_steady_vowel_frame_stays_inside_the_sample() {
+        let f = features(1.0);
+        let total_ms = f.frames() as f64 * consts::FRAME_PERIOD;
+        for attack in [0.0, 50.0, 400.0, total_ms - 5.0, total_ms + 1000.0] {
+            let steady = find_steady_vowel_frame(&f, attack);
+            assert!(steady >= attack.min(steady), "{attack} -> {steady}");
+            assert!(steady.is_finite());
+            if attack < total_ms - 10.0 {
+                assert!(steady <= total_ms, "{attack} -> {steady}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_sung_pitch_is_the_requested_pitch_not_the_pitch_of_the_sample() {
+        let f = features(1.0); // a 220 Hz sample
+        let entry = oto(0.0, 150.0, -100.0, 40.0, 20.0);
+        for (pitch, hz) in [(57, 220.0), (69, 440.0), (72, 523.25), (48, 130.81), (81, 880.0)] {
+            let mut n = bent(&[]);
+            n.pitch = pitch;
+            n.duration = 600.0;
+            let r = render_note(&n, &entry, &f, &plain_timing(40.0)).unwrap();
+            let mid = (r.lead_ms / 1000.0 * 44100.0) as usize + 8000;
+            let got = estimate_f0(&r.pcm, mid, mid + 4000);
+            assert!((got / hz - 1.0).abs() < 0.03, "pitch {pitch}: wanted {hz} Hz, got {got:.1} Hz");
+        }
+    }
+
+    #[test]
+    fn a_bend_changes_the_sung_pitch_by_that_many_cents() {
+        let f = features(1.0);
+        let entry = oto(0.0, 150.0, -100.0, 40.0, 20.0);
+        let mut flat = bent(&[]);
+        flat.duration = 600.0;
+        let mut up = bent(&[(0.0, 1200.0), (600.0, 1200.0)]);
+        up.duration = 600.0;
+        let a = render_note(&flat, &entry, &f, &plain_timing(40.0)).unwrap();
+        let b = render_note(&up, &entry, &f, &plain_timing(40.0)).unwrap();
+        let at = |r: &RenderedNote| {
+            let mid = (r.lead_ms / 1000.0 * 44100.0) as usize + 8000;
+            estimate_f0(&r.pcm, mid, mid + 4000)
+        };
+        assert!((at(&b) / at(&a) - 2.0).abs() < 0.06, "{} vs {}", at(&b), at(&a));
+    }
+
+    #[test]
+    fn length_lead_and_silence_follow_the_timing() {
+        let f = features(1.0);
+        let entry = oto(0.0, 150.0, -100.0, 40.0, 20.0);
+        let mut n = bent(&[]);
+        n.duration = 500.0;
+        let timing = NoteTiming { preutter: 40.0, overlap: 0.0, fade_in: 5.0, tail_adjust: -60.0, fade_out: 20.0 };
+        let r = render_note(&n, &entry, &f, &timing).unwrap();
+        assert_eq!(r.lead_ms, 40.0);
+        // lead + (duration + tail_adjust) = 480 ms, to within a frame.
+        let ms = r.pcm.len() as f64 / 44.1;
+        assert!((ms - 480.0).abs() <= consts::FRAME_PERIOD + 1.0, "{ms}");
+        assert!(r.pcm[0].abs() < 0.02, "starts at silence");
+        assert!(r.pcm[r.pcm.len() - 1].abs() < 0.02, "ends at silence");
+        assert!(r.pcm.iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn volume_scales_the_output_and_zero_is_silent() {
+        let f = features(1.0);
+        let entry = oto(0.0, 150.0, -100.0, 40.0, 20.0);
+        let render = |volume: f64| {
+            let mut n = bent(&[]);
+            n.volume = volume;
+            render_note(&n, &entry, &f, &plain_timing(40.0)).unwrap().pcm
+        };
+        let rms = |v: &[f32]| (v.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / v.len() as f64).sqrt();
+        let full = rms(&render(100.0));
+        assert!((rms(&render(50.0)) / full - 0.5).abs() < 0.02);
+        assert!((rms(&render(200.0)) / full - 2.0).abs() < 0.05);
+        assert!(rms(&render(0.0)) < 1e-9);
+    }
+
+    #[test]
+    fn a_shorter_consonant_with_higher_velocity_shortens_the_lead() {
+        // Velocity scales the preutterance the engine plans with (see consonant_scale).
+        assert!(consonant_scale(200.0) < consonant_scale(100.0));
+        assert!(consonant_scale(0.0) > consonant_scale(100.0));
+        assert_eq!(consonant_scale(100.0), 1.0);
+        assert_eq!(consonant_scale(1e9), 0.25);
+        assert_eq!(consonant_scale(-1e9), 4.0);
+    }
+
+    #[test]
+    fn an_empty_feature_set_is_an_error_not_a_crash() {
+        let mut f = features(0.5);
+        f.f0.clear();
+        f.mgc.clear();
+        f.bap.clear();
+        let n = bent(&[]);
+        assert!(render_note(&n, &oto(0.0, 0.0, 0.0, 0.0, 0.0), &f, &plain_timing(0.0)).is_err());
+    }
+
+    #[test]
+    fn the_pitch_offset_flag_transposes() {
+        let note = bent(&[]);
+        let flags: Flags = "t1200".parse().unwrap();
+        let (hz, dev) = build_f0(&note, &flags, 10, 0.0);
+        assert!(dev.iter().all(|d| d.abs() < 1e-12), "the flag is not a bend");
+        assert!((hz[0] / util::midi_to_hz(60.0) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fry_without_the_flag_changes_nothing() {
+        let flags: Flags = "".parse().unwrap();
+        let mut f0 = vec![300.0; 20];
+        let mut gain = vec![1.0; 20];
+        apply_fry(&mut f0, &mut gain, &flags, 0.0, 100.0);
+        assert!(f0.iter().all(|v| *v == 300.0) && gain.iter().all(|g| *g == 1.0));
+    }
+
 }
 
 fn apply_crossfade_envelopes(pcm: &mut [f32], fade_in_len_ms: f64, fade_out_len_ms: f64) {
