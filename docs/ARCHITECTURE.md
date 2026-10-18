@@ -114,6 +114,12 @@ preutterance to the gap. The result is passed to `render_note` as a `NoteTiming`
 reported back as `spans`, which the e2e tests use to assert that two notes are never at full level together.
 Pitch points are in note time (they may be negative) and are mapped onto the render with the lead taken into account.
 
+The lead-in is sung at the pitch of the note that is still sounding there, as in OpenUtau's flat pitch curve: before
+a note's start the pitch is the previous note's (`PitchEntry` in `src/lib/core/pitch.ts`, filled in by
+`toEngineNotes`), a note that follows directly glides in over 50 ms centred on its start, and the note's own pitch
+points take over where they begin. Without it a VCV lead-in ("i ら") is sung at the new pitch while the previous note
+fades out at its own, which is heard as two different notes at once.
+
 ## Progressive rendering (playback while it renders)
 
 A render is a **stream**, not a batch (`RenderStream`, `src/lib/render/types.ts`). The engine first returns a plan

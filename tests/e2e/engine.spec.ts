@@ -35,7 +35,8 @@ test.describe('audio engine in the browser', () => {
 		await app.eval((w) => w.playback.stop());
 		await app.eval((w) => w.project.updateNote(w.project.notes[1].id, { pitch: 69 }));
 		await app.eval((w) => w.playback.render());
-		expect(await app.eval((w) => w.playback.message)).toMatch(/Rendered 1, reused 2/);
+		// The edited note and the one after it, whose lead-in carries the edited note's pitch.
+		expect(await app.eval((w) => w.playback.message)).toMatch(/Rendered 2, reused 1/);
 	});
 
 	test('a track pitch curve re-renders only the notes it touches', async ({ app, page }) => {
