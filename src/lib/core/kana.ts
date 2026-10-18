@@ -327,7 +327,8 @@ export function syllableKey(text: string): string {
 	if (!t) return '';
 	if (isKana(t)) {
 		const r = kanaToRomaji(t);
-		return r === null ? t.toLowerCase() : foldRomaji(r);
+		// Kana the table does not know still meet their other-script spelling under one key.
+		return r === null ? toHiragana(t) : foldRomaji(r);
 	}
 	const lower = t.toLowerCase();
 	if (/^[a-z'-]+$/.test(lower)) {

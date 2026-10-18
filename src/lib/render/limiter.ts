@@ -24,6 +24,9 @@ const SMOOTH = ATTACK - 1;
  */
 export const LIMITER_LOOKAHEAD = (SMOOTH + RELEASE + 2) * BLOCK;
 
+/** … and before it (how far back an earlier peak can still pull the gain of a sample down). */
+export const LIMITER_LOOKBACK = (SMOOTH + ATTACK + 2) * BLOCK;
+
 export const DEFAULT_CEILING = 0.95;
 
 export interface Limited {
