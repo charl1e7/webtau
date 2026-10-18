@@ -29,10 +29,21 @@ export function toEngineNotes(
 	const curves = new Map<string, MsStroke[]>();
 	for (const t of tracks)
 		if (t.pitchCurve?.length) curves.set(t.id, strokesToMs(t.pitchCurve, tempoMap));
+	const previous = new Map<string, Note>();
 	const notes = sorted.map((n) => {
 		const start = tempoMap.tickToMs(n.tick);
 		const duration = tempoMap.tickToMs(n.tick + n.length) - start;
 		const info = byId.get(n.track);
+		// Where the sound begins before the note, it is the previous note's pitch that is sounding.
+		const before = previous.get(n.track);
+		previous.set(n.track, n);
+		const entry =
+			before && before.pitch !== n.pitch
+				? {
+						cents: (before.pitch - n.pitch) * 100,
+						until: Math.min(0, tempoMap.tickToMs(before.tick + before.length) - start)
+					}
+				: null;
 		return {
 			alias: aliasOf(n),
 			pitch: n.pitch,
@@ -41,7 +52,8 @@ export function toEngineNotes(
 			pitchbend: compilePitch(
 				n,
 				duration,
-				curves.has(n.track) ? overlayFor(curves.get(n.track)!, start, duration, n.pitch) : null
+				curves.has(n.track) ? overlayFor(curves.get(n.track)!, start, duration, n.pitch) : null,
+				entry
 			),
 			flags: n.flags,
 			velocity: n.velocity,
