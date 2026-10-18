@@ -224,4 +224,148 @@ mod tests {
         assert_eq!(t[1].preutter, 0.0);
         assert_eq!(t[0].tail_adjust, 0.0);
     }
+
+    // ---- property tests ------------------------------------------------------------------
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> f64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as f64) / ((1u64 << 31) as f64)
+        }
+        fn range(&mut self, lo: f64, hi: f64) -> f64 {
+            lo + self.next() * (hi - lo)
+        }
+    }
+
+    /// A random monophonic line: durations 30..1500 ms, gaps mostly zero, oto values like real banks.
+    fn random_line(rng: &mut Lcg) -> Vec<TimingInput> {
+        let n = 2 + (rng.next() * 10.0) as usize;
+        let mut start = rng.range(0.0, 500.0);
+        let mut out = Vec::new();
+        for _ in 0..n {
+            let duration = rng.range(30.0, 1500.0);
+            let preutter = if rng.next() < 0.15 { 0.0 } else { rng.range(0.0, 400.0) };
+            let overlap = if rng.next() < 0.2 { 0.0 } else { rng.range(-20.0, preutter.max(1.0)) };
+            out.push(TimingInput { start, duration, preutter, overlap });
+            let gap = match rng.next() {
+                x if x < 0.6 => 0.0,
+                x if x < 0.8 => rng.range(0.0, 120.0),
+                x if x < 0.9 => rng.range(120.0, 2000.0),
+                _ => -rng.range(0.0, duration * 0.5), // overlapping notes
+            };
+            start += duration + gap;
+        }
+        out
+    }
+
+    #[test]
+    fn every_value_is_finite_and_within_bounds() {
+        let mut rng = Lcg(7);
+        for round in 0..3000 {
+            let inputs = random_line(&mut rng);
+            let t = compute(&inputs);
+            assert_eq!(t.len(), inputs.len());
+            for (i, (inp, nt)) in inputs.iter().zip(&t).enumerate() {
+                let ctx = format!("round {round} note {i}: {inp:?} -> {nt:?}");
+                for v in [nt.preutter, nt.overlap, nt.fade_in, nt.tail_adjust, nt.fade_out] {
+                    assert!(v.is_finite(), "{ctx}");
+                }
+                assert!(nt.preutter >= 0.0 && nt.preutter <= inp.preutter.max(0.0) + 1e-9, "{ctx}");
+                assert!(nt.fade_in >= 0.0 && nt.fade_out >= 0.0, "{ctx}");
+                assert!(nt.end_ms(inp.duration) >= 5.0, "{ctx}");
+                // The tail only grows past the note when the next note's overlap is longer than its preutterance.
+                if i + 1 == inputs.len() {
+                    assert_eq!(nt.tail_adjust, 0.0, "{ctx}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_note_is_never_moved_by_its_neighbours_data() {
+        let mut rng = Lcg(11);
+        for _ in 0..500 {
+            let inputs = random_line(&mut rng);
+            let alone = compute(&inputs[..1]);
+            let all = compute(&inputs);
+            assert_eq!(alone[0].preutter, all[0].preutter);
+            assert_eq!(alone[0].fade_in, all[0].fade_in);
+        }
+    }
+
+    #[test]
+    fn a_note_does_not_depend_on_notes_after_the_next_one() {
+        let mut rng = Lcg(13);
+        for _ in 0..500 {
+            let inputs = random_line(&mut rng);
+            if inputs.len() < 4 {
+                continue;
+            }
+            let short = compute(&inputs[..3]);
+            let long = compute(&inputs);
+            // Notes 0 and 1 are fully decided by themselves and their neighbours up to note 2.
+            assert_eq!(short[0], long[0]);
+            assert_eq!(short[1], long[1]);
+        }
+    }
+
+    #[test]
+    fn adjacent_sounds_stack_only_inside_the_overlap() {
+        // For adjacent notes with room, the previous sound must be over when the next one is fully in.
+        let mut rng = Lcg(17);
+        let mut checked = 0;
+        for _ in 0..3000 {
+            let inputs = random_line(&mut rng);
+            let t = compute(&inputs);
+            for i in 1..inputs.len() {
+                let (prev, cur) = (inputs[i - 1], inputs[i]);
+                if cur.start - (prev.start + prev.duration) != 0.0 || prev.duration < 60.0 {
+                    continue;
+                }
+                let prev_end = prev.start + t[i - 1].end_ms(prev.duration);
+                let cur_start = cur.start - t[i].preutter;
+                let fully_in = cur_start + t[i].fade_in;
+                checked += 1;
+                // The previous sound may fade out under the next one's fade-in, no further.
+                assert!(
+                    prev_end <= fully_in + 1e-6,
+                    "prev ends {prev_end}, next fully in at {fully_in}: {prev:?} {cur:?} {:?} {:?}",
+                    t[i - 1],
+                    t[i]
+                );
+            }
+        }
+        assert!(checked > 1000, "only {checked} pairs checked");
+    }
+
+    #[test]
+    fn the_fade_of_the_previous_note_matches_the_overlap_of_the_next() {
+        let mut rng = Lcg(19);
+        for _ in 0..2000 {
+            let inputs = random_line(&mut rng);
+            let t = compute(&inputs);
+            for i in 1..inputs.len() {
+                let adjacent = inputs[i].start - (inputs[i - 1].start + inputs[i - 1].duration) <= 0.0;
+                if adjacent && t[i].overlap > 0.0 {
+                    assert!((t[i - 1].fade_out - t[i].overlap).abs() < 1e-9 || t[i - 1].fade_out == t[i].fade_in);
+                } else {
+                    assert_eq!(t[i - 1].fade_out, DEFAULT_FADE_OUT_MS);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn empty_and_single_inputs() {
+        assert!(compute(&[]).is_empty());
+        let one = compute(&[note(0.0, 100.0, -5.0, 0.0)]);
+        assert_eq!(one[0].preutter, 0.0, "a negative preutterance counts as none");
+    }
+
+    #[test]
+    fn nan_input_does_not_panic() {
+        let t = compute(&[note(0.0, 100.0, f64::NAN, f64::NAN), note(100.0, 100.0, 50.0, 10.0)]);
+        assert_eq!(t.len(), 2);
+    }
 }

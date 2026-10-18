@@ -10,13 +10,13 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct PitchbendPointInfo {
     pub offset: f64,
     pub value: f64,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct NoteInfo {
     pub alias: String,
     pub pitch: i32,
@@ -351,7 +351,9 @@ impl Engine {
         };
 
         let key = cache_key(note, &planned.oto_alias, &planned.timing, stored.epoch);
-        let rendered = if let Some(hit) = self.render_cache.get(&key) {
+        // Sounds of earlier renders, or of an identical note earlier in this one (a repeated syllable).
+        let known = self.render_cache.get(&key).or_else(|| session.new_cache.get(&key));
+        let rendered = if let Some(hit) = known {
             session.report.cached += 1;
             hit.clone()
         } else {
@@ -829,5 +831,343 @@ mod tests {
             assert!(out.iter().any(|s| s.abs() > 0.05), "{flags} is silent");
             assert_ne!(out, plain, "{flags} had no effect");
         }
+    }
+
+    // ---- more engine tests -------------------------------------------------------------------
+
+    /// An engine with one sample "a.wav" (alias "a"), features already analyzed.
+    fn engine_with_a(oto: &[u8]) -> Engine {
+        let mut engine = Engine::new();
+        engine.load_oto(oto).unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        let features = generate_features(&audio, AnalysisMode::Fast, None).unwrap();
+        engine.cache_features("a.wav", features);
+        engine
+    }
+
+    fn render_all(engine: &mut Engine, notes: Vec<NoteInfo>) -> Vec<f32> {
+        engine.begin(ProjectInfo { tempo: 120.0, notes });
+        while engine.step(4).unwrap() > 0 {}
+        engine.finish().unwrap()
+    }
+
+    #[test]
+    fn nothing_to_render_is_not_an_error() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        assert_eq!(engine.begin(ProjectInfo { tempo: 120.0, notes: vec![] }), 0);
+        assert_eq!(engine.step(4).unwrap(), 0);
+        let pcm = engine.finish().unwrap();
+        assert!(pcm.iter().all(|s| *s == 0.0));
+        let report = engine.report();
+        assert_eq!((report.total, report.rendered), (0, 0));
+
+        let pcm = render_all(&mut engine, vec![note("R", 0.0, 100.0, 60), note("r", 100.0, 100.0, 60)]);
+        assert!(pcm.iter().all(|s| *s == 0.0));
+        assert_eq!(engine.report().skipped_rests, 2);
+    }
+
+    #[test]
+    fn calls_without_a_session_fail_cleanly() {
+        let mut engine = Engine::new();
+        assert!(engine.step(1).is_err());
+        assert!(engine.render_planned(&[0]).is_err());
+        assert!(engine.finish().is_err());
+        assert!(engine.plan_info().is_empty());
+        assert!(engine.read_master(0, 100).is_empty());
+    }
+
+    #[test]
+    fn indices_out_of_range_and_repeated_are_harmless() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        engine.begin(ProjectInfo {
+            tempo: 120.0,
+            notes: vec![note("a", 0.0, 300.0, 60), note("a", 300.0, 300.0, 62)],
+        });
+        assert_eq!(engine.render_planned(&[7, usize::MAX, 0, 0, 0]).unwrap(), 1);
+        assert_eq!(engine.render_planned(&[]).unwrap(), 1);
+        assert_eq!(engine.render_planned(&[1, 1]).unwrap(), 0);
+        engine.end_stream(true).unwrap();
+        assert_eq!(engine.report().rendered, 2);
+    }
+
+    #[test]
+    fn reading_the_master_outside_its_range_gives_what_exists() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        engine.begin(ProjectInfo { tempo: 120.0, notes: vec![note("a", 0.0, 300.0, 60)] });
+        let total = engine.read_master(0, usize::MAX / 4).len();
+        assert!(total > 0);
+        assert!(engine.read_master(total + 10, 100).is_empty());
+        assert!(engine.read_master(usize::MAX, 100).is_empty());
+        assert_eq!(engine.read_master(total - 5, 100).len(), 5);
+        assert!(engine.read_master(0, 0).is_empty());
+    }
+
+    #[test]
+    fn notes_without_analyzed_samples_are_reported_not_fatal() {
+        let mut engine = Engine::new();
+        engine.load_oto(b"a.wav=a,0,150,-100,40,20\nb.wav=b,0,150,-100,40,20\n").unwrap();
+        let audio = read_audio(&make_wav(1.0)).unwrap();
+        engine.cache_features("a.wav", generate_features(&audio, AnalysisMode::Fast, None).unwrap());
+        let pcm = render_all(
+            &mut engine,
+            vec![note("a", 0.0, 300.0, 60), note("b", 300.0, 300.0, 60), note("a", 600.0, 300.0, 60)],
+        );
+        assert!(pcm.iter().any(|s| s.abs() > 0.05));
+        let report = engine.report();
+        assert_eq!(report.rendered, 2);
+        assert_eq!(report.missing_features, vec![1]);
+        assert!(report.missing_alias.is_empty());
+    }
+
+    #[test]
+    fn replacing_features_invalidates_notes_that_used_them() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        let notes = || vec![note("a", 0.0, 300.0, 60)];
+        render_all(&mut engine, notes());
+        assert_eq!((engine.report().rendered, engine.report().cached), (1, 0));
+        render_all(&mut engine, notes());
+        assert_eq!((engine.report().rendered, engine.report().cached), (0, 1));
+        let audio = read_audio(&make_wav(0.8)).unwrap();
+        engine.cache_features("A.WAV", generate_features(&audio, AnalysisMode::Fast, None).unwrap());
+        render_all(&mut engine, notes());
+        assert_eq!((engine.report().rendered, engine.report().cached), (1, 0));
+    }
+
+    #[test]
+    fn what_makes_a_sound_different_is_part_of_its_cache_key() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        let base = note("a", 0.0, 300.0, 60);
+        let variants: Vec<(&str, Box<dyn Fn(&mut NoteInfo)>)> = vec![
+            ("pitch", Box::new(|n| n.pitch = 61)),
+            ("duration", Box::new(|n| n.duration = 301.0)),
+            ("velocity", Box::new(|n| n.velocity = 80.0)),
+            ("volume", Box::new(|n| n.volume = 70.0)),
+            ("flags", Box::new(|n| n.flags = "g5".into())),
+            (
+                "pitchbend",
+                Box::new(|n| n.pitchbend = vec![PitchbendPointInfo { offset: 10.0, value: 50.0 }]),
+            ),
+        ];
+        render_all(&mut engine, vec![base.clone()]);
+        // What does not change the sound does not re-render it: the start time and the modulation field.
+        let mut moved = base.clone();
+        moved.start_time = 1000.0;
+        moved.modulation = 30.0;
+        render_all(&mut engine, vec![moved]);
+        assert_eq!(engine.report().cached, 1, "a note moved in time can reuse its sound");
+        for (what, change) in &variants {
+            let mut n = base.clone();
+            change(&mut n);
+            render_all(&mut engine, vec![n]);
+            assert_eq!(engine.report().rendered, 1, "changing the {what} must re-render");
+        }
+    }
+
+    #[test]
+    fn identical_notes_share_a_sound_but_each_is_mixed_at_its_own_place() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        let pcm = render_all(
+            &mut engine,
+            vec![note("a", 0.0, 300.0, 60), note("a", 1000.0, 300.0, 60), note("a", 2000.0, 300.0, 60)],
+        );
+        assert_eq!(engine.report().rendered, 1);
+        assert_eq!(engine.report().cached, 2);
+        let sr = consts::SAMPLE_RATE as usize;
+        let energy = |from_ms: usize| -> f32 {
+            pcm[from_ms * sr / 1000..(from_ms + 300) * sr / 1000].iter().map(|s| s * s).sum()
+        };
+        assert!(energy(0) > 1.0 && energy(1000) > 1.0 && energy(2000) > 1.0);
+        assert!(pcm[sr * 3 / 2..sr * 3 / 2 + 2000].iter().all(|s| s.abs() < 1e-3), "silence between notes");
+        assert!((energy(1000) / energy(2000) - 1.0).abs() < 0.2, "same sound each time");
+    }
+
+    #[test]
+    fn extreme_note_values_never_panic_and_stay_finite() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        let weird = |f: &dyn Fn(&mut NoteInfo)| {
+            let mut n = note("a", 100.0, 300.0, 60);
+            f(&mut n);
+            n
+        };
+        let cases: Vec<(&str, NoteInfo)> = vec![
+            ("tiny duration", weird(&|n| n.duration = 0.001)),
+            ("zero duration", weird(&|n| n.duration = 0.0)),
+            ("negative duration", weird(&|n| n.duration = -50.0)),
+            ("very long", weird(&|n| n.duration = 20_000.0)),
+            ("low pitch", weird(&|n| n.pitch = 0)),
+            ("high pitch", weird(&|n| n.pitch = 127)),
+            ("silly pitch", weird(&|n| n.pitch = 300)),
+            ("negative pitch", weird(&|n| n.pitch = -40)),
+            ("velocity 0", weird(&|n| n.velocity = 0.0)),
+            ("velocity 1000", weird(&|n| n.velocity = 1000.0)),
+            ("volume 0", weird(&|n| n.volume = 0.0)),
+            ("volume 500", weird(&|n| n.volume = 500.0)),
+            ("garbage flags", weird(&|n| n.flags = "あg5///--++gw".into())),
+            (
+                "unsorted bend",
+                weird(&|n| {
+                    n.pitchbend = vec![
+                        PitchbendPointInfo { offset: 200.0, value: 100.0 },
+                        PitchbendPointInfo { offset: -300.0, value: -100.0 },
+                        PitchbendPointInfo { offset: 0.0, value: 5000.0 },
+                    ]
+                }),
+            ),
+            (
+                "bend far outside the note",
+                weird(&|n| n.pitchbend = vec![PitchbendPointInfo { offset: 1e7, value: 1e5 }]),
+            ),
+        ];
+        for (what, n) in cases {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut e = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+                let pcm = render_all(&mut e, vec![n]);
+                (pcm.iter().all(|s| s.is_finite()), e.report().errors.len())
+            }));
+            let (finite, errors) = result.unwrap_or_else(|_| panic!("{what}: panicked"));
+            assert!(finite, "{what}: output is not finite");
+            let _ = errors;
+        }
+        // The engine used above is still fine afterwards.
+        let pcm = render_all(&mut engine, vec![note("a", 0.0, 300.0, 60)]);
+        assert!(pcm.iter().any(|s| s.abs() > 0.05));
+    }
+
+    #[test]
+    fn oto_values_that_real_banks_have_are_survived() {
+        // Negative cutoff (measured from the offset), cutoff longer than the file, offset past the end,
+        // preutterance longer than the sample, all zeros.
+        for oto in [
+            "a.wav=a,0,150,-100,40,20",
+            "a.wav=a,0,150,-100000,40,20",
+            "a.wav=a,0,150,100000,40,20",
+            "a.wav=a,5000,150,0,40,20",
+            "a.wav=a,0,150,0,5000,5000",
+            "a.wav=a,0,0,0,0,0",
+            "a.wav=a,-50,-50,-50,-50,-50",
+            "a.wav=a,0,150,0,40,-30",
+        ] {
+            let mut e = engine_with_a(oto.as_bytes());
+            let pcm = render_all(&mut e, vec![note("a", 0.0, 400.0, 60), note("a", 400.0, 400.0, 64)]);
+            assert!(pcm.iter().all(|s| s.is_finite()), "{oto}");
+            assert!(e.report().errors.is_empty(), "{oto}: {:?}", e.report().errors);
+        }
+    }
+
+    #[test]
+    fn prefix_map_picks_the_nearest_line_below_the_pitch_and_falls_back() {
+        let mut engine = Engine::new();
+        engine
+            .load_oto(b"a.wav=a,0,0,0,0,0\nb.wav=a_C4,0,0,0,0,0\nc.wav=a_C6,0,0,0,0,0\n")
+            .unwrap();
+        engine.load_prefix_map(b"C4=\t_C4\nC6=\t_C6\nC7=\t_C7\n");
+        let files = |pitch: i32| engine.required_files(&[note("a", 0.0, 1.0, pitch)]).0;
+        assert_eq!(files(59), vec!["a.wav"]); // below every line: the plain alias
+        assert_eq!(files(60), vec!["b.wav"]);
+        assert_eq!(files(83), vec!["b.wav"]);
+        assert_eq!(files(84), vec!["c.wav"]);
+        // The C7 line applies from here on, but "a_C7" does not exist: the plain alias is used.
+        assert_eq!(files(96), vec!["a.wav"]);
+    }
+
+    #[test]
+    fn required_files_lists_each_sample_once_in_first_use_order() {
+        let mut engine = Engine::new();
+        engine.load_oto(b"x.wav=a,0,0,0,0,0\nx.wav=b,0,0,0,0,0\ny.wav=c,0,0,0,0,0\n").unwrap();
+        let (files, missing) = engine.required_files(&[
+            note("c", 0.0, 1.0, 60),
+            note("a", 0.0, 1.0, 60),
+            note("b", 0.0, 1.0, 60),
+            note("c", 0.0, 1.0, 60),
+            note("nope", 0.0, 1.0, 60),
+            note("R", 0.0, 1.0, 60),
+        ]);
+        assert_eq!(files, vec!["y.wav", "x.wav"]);
+        assert_eq!(missing, vec![4]);
+    }
+
+    #[test]
+    fn file_names_are_compared_by_their_last_part_in_lower_case() {
+        assert_eq!(normalize_filename("Sub/Dir\\A.WAV"), "a.wav");
+        assert_eq!(normalize_filename("a.wav"), "a.wav");
+        assert_eq!(normalize_filename(""), "");
+        assert_eq!(normalize_filename("dir/"), "");
+        let mut engine = Engine::new();
+        engine.load_oto(b"Sub\\Ka.WAV=ka,0,0,0,0,0\n").unwrap();
+        let audio = read_audio(&make_wav(0.5)).unwrap();
+        engine.cache_features("ka.wav", generate_features(&audio, AnalysisMode::Fast, None).unwrap());
+        assert!(engine.has_features("Sub/KA.wav"));
+    }
+
+    #[test]
+    fn an_empty_oto_is_an_error_and_a_reset_forgets_everything() {
+        let mut engine = Engine::new();
+        assert!(engine.load_oto(b"").is_err());
+        assert!(engine.load_oto(b"# only a comment\n").is_err());
+        assert!(engine.load_oto(b"no equals sign here").is_err());
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        engine.reset();
+        assert!(!engine.has_features("a.wav"));
+        assert!(engine.oto_entries().is_empty());
+    }
+
+    #[test]
+    fn spans_enclose_the_note_start_and_belong_to_rendered_notes_only() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,60,25\n");
+        engine.begin(ProjectInfo {
+            tempo: 120.0,
+            notes: vec![note("R", 0.0, 200.0, 60), note("a", 200.0, 300.0, 60), note("zz", 500.0, 300.0, 60), note("a", 800.0, 300.0, 60)],
+        });
+        let plan = engine.plan_info();
+        assert_eq!(plan.iter().map(|p| p.source_index).collect::<Vec<_>>(), vec![1, 3]);
+        for p in &plan {
+            assert!(p.span_start <= p.start && p.start <= p.span_end, "{p:?}");
+        }
+        while engine.step(4).unwrap() > 0 {}
+        engine.finish().unwrap();
+        let report = engine.report();
+        assert_eq!(report.spans.len(), 2);
+        assert_eq!(report.missing_alias, vec![2]);
+        assert_eq!(report.skipped_rests, 1);
+        assert_eq!(report.total, 4);
+    }
+
+    #[test]
+    fn tracks_do_not_give_way_to_each_other() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,200,60\n");
+        let mut a = note("a", 0.0, 170.0, 60);
+        let mut b = note("a", 170.0, 170.0, 64);
+        a.track = 0;
+        b.track = 1;
+        engine.begin(ProjectInfo { tempo: 120.0, notes: vec![a.clone(), b.clone()] });
+        let separate: Vec<NoteTiming> = engine.session.as_ref().unwrap().plan.iter().map(|p| p.timing).collect();
+        b.track = 0;
+        engine.begin(ProjectInfo { tempo: 120.0, notes: vec![a, b] });
+        let together: Vec<NoteTiming> = engine.session.as_ref().unwrap().plan.iter().map(|p| p.timing).collect();
+        assert_eq!(separate[1].preutter, 200.0, "another track is not a neighbour");
+        assert!(together[1].preutter < 200.0, "the same track is");
+    }
+
+    #[test]
+    fn a_new_session_discards_an_unfinished_one() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        engine.begin(ProjectInfo { tempo: 120.0, notes: vec![note("a", 0.0, 300.0, 60)] });
+        engine.begin(ProjectInfo {
+            tempo: 120.0,
+            notes: vec![note("a", 0.0, 300.0, 60), note("a", 300.0, 300.0, 62)],
+        });
+        assert_eq!(engine.plan_info().len(), 2);
+        while engine.step(4).unwrap() > 0 {}
+        engine.finish().unwrap();
+        assert_eq!(engine.report().total, 2);
+    }
+
+    #[test]
+    fn the_mix_is_long_enough_for_the_last_note_and_its_tail() {
+        let mut engine = engine_with_a(b"a.wav=a,0,150,-100,40,20\n");
+        let pcm = render_all(&mut engine, vec![note("a", 5000.0, 400.0, 60)]);
+        let sr = consts::SAMPLE_RATE as usize;
+        assert!(pcm.len() >= sr * 54 / 10, "end of the note at 5.4 s");
+        assert!(pcm.len() <= sr * 8, "not absurdly long: {}", pcm.len());
     }
 }

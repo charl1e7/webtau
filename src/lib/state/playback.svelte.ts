@@ -31,6 +31,8 @@ const MIN_CHUNK_MS = 20;
  * playhead, so that a single finished note does not make it stutter forward one note at a time.
  */
 const LEAD_MS = 2000;
+/** A song longer than this is not rendered: its audio alone would take hundreds of megabytes. */
+const MAX_SONG_MS = 30 * 60 * 1000;
 /** An edit made under playback is re-rendered once the changes stop for this long (or after EDIT_MAX_WAIT_MS). */
 const EDIT_SETTLE_MS = 150;
 const EDIT_MAX_WAIT_MS = 800;
@@ -109,6 +111,13 @@ class PlaybackState {
 		}
 		if (!project.notes.length) {
 			ui.error('Add some notes first.');
+			return null;
+		}
+		if (this.endMs() > MAX_SONG_MS) {
+			const minutes = Math.round(this.endMs() / 60000);
+			ui.error(
+				`The song is ${minutes} minutes long; rendering is limited to ${MAX_SONG_MS / 60000}.`
+			);
 			return null;
 		}
 		if (this.run && this.renderedKey === this.key()) {

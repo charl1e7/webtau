@@ -53,4 +53,32 @@ mod tests {
         assert_eq!(pitch_parser("60").unwrap(), 60);
         assert!(pitch_parser("H4").is_err());
     }
+
+    #[test]
+    fn note_names_in_every_spelling() {
+        use super::pitch_parser;
+        assert_eq!(pitch_parser("c4").unwrap(), 60);
+        assert_eq!(pitch_parser("C-1").unwrap(), 0);
+        assert_eq!(pitch_parser("G9").unwrap(), 127);
+        assert_eq!(pitch_parser("Db4").unwrap(), 61);
+        assert_eq!(pitch_parser("C#4").unwrap(), 61);
+        assert_eq!(pitch_parser(" 72 ").unwrap(), 72);
+        assert_eq!(pitch_parser("-5").unwrap(), -5);
+        for bad in ["", "C", "C#", "Cx4", "C4.5", "C 4", "♯", "あ4", "C♯4"] {
+            assert!(pitch_parser(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn hertz_and_interpolation() {
+        use super::{lerp, midi_to_hz};
+        assert!((midi_to_hz(69.0) - 440.0).abs() < 1e-9);
+        assert!((midi_to_hz(81.0) - 880.0).abs() < 1e-9);
+        assert!((midi_to_hz(57.0) - 220.0).abs() < 1e-9);
+        assert!((midi_to_hz(60.5) / midi_to_hz(60.0) - 2f64.powf(0.5 / 12.0)).abs() < 1e-12);
+        assert_eq!(lerp(2.0, 10.0, 0.0), 2.0);
+        assert_eq!(lerp(2.0, 10.0, 1.0), 10.0);
+        assert_eq!(lerp(2.0, 10.0, 0.25), 4.0);
+        assert_eq!(lerp(2.0, 10.0, 2.0), 18.0, "no clamping");
+    }
 }

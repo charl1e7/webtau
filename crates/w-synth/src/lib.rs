@@ -7,6 +7,8 @@ mod flags;
 mod interpolator;
 mod oto;
 mod resample;
+#[cfg(test)]
+mod testutil;
 mod timing;
 mod util;
 mod world;

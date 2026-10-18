@@ -55,7 +55,8 @@ pub fn parse_oto_ini(data: &[u8]) -> Result<HashMap<String, OtoEntry>> {
     let mut oto_map = HashMap::new();
 
     for line in text.lines() {
-        let line = line.trim();
+        // A byte order mark (in front of the first line of a file, or of each merged file) is not part of the name.
+        let line = line.trim().trim_start_matches('\u{feff}').trim();
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
@@ -152,5 +153,62 @@ mod tests {
         assert_eq!(map[&60], ("pre".into(), "suf".into()));
         assert_eq!(map[&62], ("".into(), "_D".into()));
         assert_eq!(map[&64], ("".into(), "_E".into()));
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_end_up_in_the_first_file_name() {
+        let data = "\u{feff}a.wav=a,1,2,3,4,5\r\nb.wav=b,1,2,3,4,5\r\n";
+        let map = parse_oto_ini(data.as_bytes()).unwrap();
+        assert_eq!(map["a"].filename, "a.wav");
+        assert_eq!(map["b"].filename, "b.wav");
+    }
+
+    #[test]
+    fn comments_blank_lines_crlf_and_spaces_are_tolerated() {
+        let data = b"# comment\r\n; another\r\n\r\n  ka.wav = ka , 10 , 20 , -30 , 40 , 5 \r\nsa.wav=sa,0,0,0,0,0\n";
+        let map = parse_oto_ini(data).unwrap();
+        assert_eq!(map.len(), 2);
+        let ka = &map["ka"];
+        assert_eq!((ka.offset, ka.consonant, ka.cutoff, ka.preutterance, ka.overlap), (10.0, 20.0, -30.0, 40.0, 5.0));
+    }
+
+    #[test]
+    fn lines_with_too_few_values_or_garbage_numbers_are_handled() {
+        let map = parse_oto_ini(b"a.wav=a,1,2,3\nb.wav=b,x,y,z,w,v\nc.wav=c,1.5,2.5,3.5,4.5,5.5,6.5\n").unwrap();
+        assert!(!map.contains_key("a"), "four values are not enough");
+        assert_eq!(map["b"].offset, 0.0, "unreadable numbers count as zero");
+        assert_eq!(map["c"].overlap, 5.5);
+    }
+
+    #[test]
+    fn the_last_of_two_identical_aliases_wins() {
+        let map = parse_oto_ini(b"x.wav=a,1,0,0,0,0\ny.wav=a,2,0,0,0,0\n").unwrap();
+        assert_eq!(map["a"].filename, "y.wav");
+    }
+
+    #[test]
+    fn an_uppercase_extension_still_gives_the_alias_from_the_file_name() {
+        let map = parse_oto_ini(b"KA.WAV=,0,0,0,0,0\nsub/sa.wav=,0,0,0,0,0\nna=,0,0,0,0,0\n").unwrap();
+        assert!(map.contains_key("KA"));
+        assert!(map.contains_key("sub/sa"));
+        assert!(map.contains_key("na"));
+    }
+
+    #[test]
+    fn lookup_ignores_case_and_surrounding_spaces_but_not_inner_ones() {
+        let bank = OtoBank::from_entries(parse_oto_ini("a.wav=- あ,0,0,0,0,0\n".as_bytes()).unwrap());
+        assert!(bank.find("- あ").is_some());
+        assert!(bank.find("  - あ ").is_some());
+        assert!(bank.find("-あ").is_none());
+        assert_eq!(bank.iter().count(), 1);
+    }
+
+    #[test]
+    fn prefix_map_lines_in_every_form() {
+        let map = parse_prefix_map(b"C4=pre\tsuf\r\n60=\t_x\nD#5=only\nnot a line\n=empty\nQ9=bad\n");
+        assert_eq!(map[&60], (String::new(), "_x".to_string()), "later line for the same pitch wins");
+        assert_eq!(map[&75], (String::new(), "only".to_string()));
+        assert_eq!(map.len(), 2);
+        assert!(parse_prefix_map(b"").is_empty());
     }
 }

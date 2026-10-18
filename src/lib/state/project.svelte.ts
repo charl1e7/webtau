@@ -25,6 +25,11 @@ interface Snapshot {
 
 const AUTOSAVE_KEY = 'webtau:autosave';
 
+/** True when both lists hold the very same items: an edit that rebuilt an array but changed nothing. */
+function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
+	return a === b || (a.length === b.length && a.every((item, i) => item === b[i]));
+}
+
 export class ProjectState {
 	name = $state('Untitled');
 	voicebankName = $state('');
@@ -130,7 +135,8 @@ export class ProjectState {
 	 */
 	edit(update: (notes: Note[]) => Note[], opts: { coalesce?: string } = {}) {
 		const next = update(this.notes);
-		if (next === this.notes) return;
+		// Mapping over the notes builds a new array even when no note changed: that is not an edit.
+		if (sameItems(next, this.notes)) return;
 		if (!this.gestureBase) this.record(opts.coalesce);
 		// A pitch curve drawn over notes goes with them when they move.
 		if (!this.gestureBase) this.tracks = followMovedNotes(this.tracks, this.notes, next) as Track[];
@@ -164,7 +170,7 @@ export class ProjectState {
 
 	preview(update: (notes: Note[]) => Note[]) {
 		const next = update(this.notes);
-		if (next === this.notes) return;
+		if (sameItems(next, this.notes)) return;
 		const base = this.gestureBase;
 		if (base) {
 			const tracks = followMovedNotes(base.tracks, base.notes, next) as Track[];
@@ -269,7 +275,11 @@ export class ProjectState {
 	}
 
 	paste(atTick: number): number {
-		const added = pasteNotes(this.clipboard, atTick);
+		// Notes copied from a track that has been deleted since go to the active track.
+		const known = new Set(this.tracks.map((t) => t.id));
+		const added = pasteNotes(this.clipboard, atTick).map((n) =>
+			known.has(n.track) ? n : { ...n, track: this.activeTrack }
+		);
 		if (!added.length) return 0;
 		this.edit((notes) => [...notes, ...added]);
 		this.select(added.map((n) => n.id));
@@ -360,7 +370,7 @@ export class ProjectState {
 		const track = this.tracks.find((t) => t.id === id);
 		if (!track) return;
 		const next = insertStroke(track.pitchCurve, points);
-		if (next.length || track.pitchCurve.length) this.setPitchCurve(id, next);
+		if (!sameItems(next, track.pitchCurve)) this.setPitchCurve(id, next);
 	}
 
 	/** Freehand drawing in the single-note mode: bakes the stroke into the notes of a track. */
